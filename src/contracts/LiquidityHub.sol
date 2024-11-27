@@ -10,8 +10,6 @@ import {ILiquidityHub} from '../interfaces/ILiquidityHub.sol';
 import {IReserveInterestRateStrategy} from '../interfaces/IReserveInterestRateStrategy.sol';
 import {DataTypes} from '../libraries/types/DataTypes.sol';
 
-import 'forge-std/console2.sol';
-
 contract LiquidityHub is ILiquidityHub {
   using SafeERC20 for IERC20;
   using WadRayMath for uint256;
@@ -323,6 +321,7 @@ contract LiquidityHub is ILiquidityHub {
     uint256 amount
   ) internal view {
     // TODO: Other cases of status (frozen, paused)
+    // TODO: still allow withdrawal even if asset is not active, only prevent for frozen/paused?
     require(asset.config.active, 'ASSET_NOT_ACTIVE');
     require(
       amount <= convertSharesToAssetsDown(asset.id, (spoke.totalShares - spoke.drawnShares)),
@@ -350,7 +349,7 @@ contract LiquidityHub is ILiquidityHub {
     // TODO: Other cases of status (frozen, paused)
     require(asset.config.active, 'ASSET_NOT_ACTIVE');
 
-    // Esnure spoke is not restoring more than supplied
+    // Ensure spoke is not restoring more than supplied
     require(sharesAmount <= drawnShares, 'INVALID_RESTORE_AMOUNT');
   }
 
@@ -393,12 +392,6 @@ contract LiquidityHub is ILiquidityHub {
       uint256 cumulated = totalDrawn.rayMul(
         MathUtils.calculateLinearInterest(borrowRate, uint40(asset.lastUpdateTimestamp))
       ); // TODO rounding
-      console2.log(
-        'cumulated: %e, drawn: %e, cumulatedInterest: %e',
-        cumulated,
-        totalDrawn,
-        (cumulated - totalDrawn)
-      );
       asset.totalAssets += (cumulated - totalDrawn); // add delta, ie cumulated interest to totalAssets
       asset.drawnShares = cumulated.toSharesDown(asset.totalAssets, asset.totalShares);
 

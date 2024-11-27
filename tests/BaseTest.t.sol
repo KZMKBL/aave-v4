@@ -44,10 +44,19 @@ contract Events {
   event Repaid(uint256 indexed assetId, address indexed user, uint256 amount);
   event Supplied(uint256 indexed assetId, address indexed user, uint256 amount);
   event Withdrawn(uint256 indexed assetId, address indexed user, uint256 amount);
+  event ReserveConfigUpdated(
+    uint256 indexed assetId,
+    uint256 lt,
+    uint256 lb,
+    bool borrowable,
+    bool collateral
+  );
+  event UsingAsCollateral(uint256 indexed assetId, address indexed user, bool usingAsCollateral);
 }
 
 library TestErrors {
   // Aave
+  // LiquidityHub
   bytes constant NOT_AVAILABLE_LIQUIDITY = 'NOT_AVAILABLE_LIQUIDITY';
   bytes constant ASSET_NOT_ACTIVE = 'ASSET_NOT_ACTIVE';
   bytes constant ASSET_NOT_LISTED = 'ASSET_NOT_LISTED';
@@ -59,16 +68,24 @@ library TestErrors {
   bytes constant RESERVE_NOT_BORROWABLE = 'RESERVE_NOT_BORROWABLE';
   bytes constant INVALID_RESERVE = 'INVALID_RESERVE';
   bytes constant INVALID_SPOKE = 'INVALID_SPOKE';
+  bytes constant RESERVE_NOT_COLLATERAL = 'RESERVE_NOT_COLLATERAL';
+  bytes constant INVALID_RESTORE_AMOUNT = 'INVALID_RESTORE_AMOUNT';
+  // Spoke
+  bytes constant NO_SUPPLY = 'NO_SUPPLY';
+  bytes constant REPAY_EXCEEDS_DEBT = 'REPAY_EXCEEDS_DEBT';
+  bytes constant RESERVE_NOT_LISTED = 'RESERVE_NOT_LISTED';
 }
 
 abstract contract BaseTest is Test, Events {
   using WadRayMath for uint256;
   using SharesMath for uint256;
 
+  // TODO: update these mocked tokens with decimals as in the real contracts, ie USDC = 6, wbtc = 8, etc.?
   IERC20 internal usdc;
   IERC20 internal dai;
   IERC20 internal usdt;
   IERC20 internal eth;
+  IERC20 internal wbtc;
 
   IPriceOracle oracle;
   LiquidityHub hub;
@@ -87,11 +104,12 @@ abstract contract BaseTest is Test, Events {
     creditLineIRStrategy = new DefaultReserveInterestRateStrategy(mockAddressesProvider);
     irStrategy = new DefaultReserveInterestRateStrategy(mockAddressesProvider);
     hub = new LiquidityHub();
-    spoke1 = new Spoke(address(hub));
-    spoke2 = new Spoke(address(hub));
+    spoke1 = new Spoke(address(hub), address(oracle));
+    spoke2 = new Spoke(address(hub), address(oracle));
     dai = new MockERC20();
     eth = new MockERC20();
     usdc = new MockERC20();
     usdt = new MockERC20();
+    wbtc = new MockERC20();
   }
 }

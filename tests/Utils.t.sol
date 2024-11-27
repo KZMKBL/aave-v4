@@ -23,6 +23,7 @@ library Utils {
       Spoke(spokes[i]).addReserve(assetId, reserveConfigs[i], asset);
     }
   }
+
   function supply(
     Vm vm,
     LiquidityHub hub,
@@ -65,6 +66,19 @@ library Utils {
     vm.stopPrank();
   }
 
+  function borrow(
+    Vm vm,
+    Spoke spoke,
+    uint256 assetId,
+    address user,
+    uint256 amount,
+    address onBehalfOf
+  ) internal {
+    vm.startPrank(user);
+    spoke.borrow(assetId, user, amount);
+    vm.stopPrank();
+  }
+
   // spoke
   function spokeSupply(
     Vm vm,
@@ -81,17 +95,32 @@ library Utils {
     spoke.supply(assetId, amount);
     vm.stopPrank();
   }
-
-  function borrow(
+  function setUsingAsCollateral(
     Vm vm,
     Spoke spoke,
-    uint256 assetId,
     address user,
-    uint256 amount,
-    address onBehalfOf
+    uint256 assetId,
+    bool usingAsCollateral
   ) internal {
-    vm.startPrank(user);
-    spoke.borrow(assetId, user, amount);
-    vm.stopPrank();
+    vm.prank(user);
+    ISpoke(spoke).setUsingAsCollateral(assetId, usingAsCollateral);
+  }
+
+  function updateLiquidationThreshold(Spoke spoke, uint256 assetId, uint256 newLt) internal {
+    Spoke.Reserve memory reserveData = spoke.getReserve(assetId);
+    reserveData.config.lt = newLt;
+    Spoke(spoke).updateReserveConfig(assetId, reserveData.config);
+  }
+
+  function updateCollateral(Spoke spoke, uint256 assetId, bool newCollateral) internal {
+    Spoke.Reserve memory reserveData = spoke.getReserve(assetId);
+    reserveData.config.collateral = newCollateral;
+    Spoke(spoke).updateReserveConfig(assetId, reserveData.config);
+  }
+
+  function updateBorrowable(Spoke spoke, uint256 assetId, bool newBorrowable) internal {
+    Spoke.Reserve memory reserveData = spoke.getReserve(assetId);
+    reserveData.config.borrowable = newBorrowable;
+    Spoke(spoke).updateReserveConfig(assetId, reserveData.config);
   }
 }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.0;
 
-import {IPriceOracle} from 'src/contracts/IPriceOracle.sol';
+import {IPriceOracle} from 'src/interfaces/IPriceOracle.sol';
 
 contract MockPriceOracle is IPriceOracle {
   // Map of asset prices (assetId => price)
+  // TODO: update to reserveId when assetId/reserveId mapping is implemented
   mapping(uint256 => uint256) internal prices;
 
   uint256 internal ethPriceUsd;

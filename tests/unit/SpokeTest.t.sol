@@ -22,12 +22,20 @@ contract SpokeTest is BaseTest {
       supplyCap: type(uint256).max,
       drawCap: type(uint256).max
     });
+
     Spoke.ReserveConfig[] memory reserveConfigs = new Spoke.ReserveConfig[](2);
-    reserveConfigs[0] = Spoke.ReserveConfig({lt: 0, lb: 0, borrowable: true, collateral: false});
-    reserveConfigs[1] = Spoke.ReserveConfig({lt: 0, lb: 0, borrowable: true, collateral: false});
 
     // Add dai
     uint256 daiAssetId = 0;
+
+    reserveConfigs[0] = Spoke.ReserveConfig({
+      lt: 0.75e4,
+      lb: 0,
+      borrowable: true,
+      collateral: true
+    });
+    reserveConfigs[1] = Spoke.ReserveConfig({lt: 0.8e4, lb: 0, borrowable: true, collateral: true});
+
     Utils.addAssetAndSpokes(
       hub,
       address(dai),
@@ -40,6 +48,15 @@ contract SpokeTest is BaseTest {
 
     // Add eth
     uint256 ethAssetId = 1;
+
+    reserveConfigs[0] = Spoke.ReserveConfig({lt: 0.8e4, lb: 0, borrowable: true, collateral: true});
+    reserveConfigs[1] = Spoke.ReserveConfig({
+      lt: 0.76e4,
+      lb: 0,
+      borrowable: true,
+      collateral: true
+    });
+
     Utils.addAssetAndSpokes(
       hub,
       address(eth),
@@ -49,6 +66,32 @@ contract SpokeTest is BaseTest {
       reserveConfigs
     );
     MockPriceOracle(address(oracle)).setAssetPrice(ethAssetId, 2000e8);
+
+    // Add USDC
+    uint256 usdcId = 2;
+
+    reserveConfigs[0] = Spoke.ReserveConfig({
+      lt: 0.78e4,
+      lb: 0,
+      borrowable: true,
+      collateral: true
+    });
+    reserveConfigs[1] = Spoke.ReserveConfig({
+      lt: 0.72e4,
+      lb: 0,
+      borrowable: true,
+      collateral: true
+    });
+
+    Utils.addAssetAndSpokes(
+      hub,
+      address(usdc),
+      DataTypes.AssetConfig({decimals: 18, active: true, irStrategy: address(irStrategy)}),
+      spokes,
+      spokeConfigs,
+      reserveConfigs
+    );
+    MockPriceOracle(address(oracle)).setAssetPrice(usdcId, 1e8);
 
     irStrategy.setInterestRateParams(
       daiAssetId,
@@ -68,6 +111,24 @@ contract SpokeTest is BaseTest {
         variableRateSlope2: 500 // 5.00%
       })
     );
+    irStrategy.setInterestRateParams(
+      usdcId,
+      IDefaultInterestRateStrategy.InterestRateData({
+        optimalUsageRatio: 9000, // 90.00%
+        baseVariableBorrowRate: 500, // 5.00%
+        variableRateSlope1: 500, // 5.00%
+        variableRateSlope2: 500 // 5.00%
+      })
+    );
+  }
+
+  function test_supply_revertsWith_reserve_not_listed() public {
+    uint256 assetId = 5; // invalid assetId
+    uint256 amount = 100e18;
+
+    vm.prank(USER1);
+    vm.expectRevert(TestErrors.RESERVE_NOT_LISTED);
+    spoke1.supply(assetId, amount);
   }
 
   function test_supply() public {
@@ -102,6 +163,29 @@ contract SpokeTest is BaseTest {
       'wrong user supply shares'
     );
     assertEq(userData.debtShares, 0, 'wrong user debt shares');
+  }
+
+  function test_borrow_revertsWith_reserve_not_borrowable() public {
+    uint256 daiId = 0;
+    uint256 ethId = 1;
+    uint256 daiAmount = 100e18;
+    uint256 ethAmount = 10e18;
+
+    // USER1 supply eth
+    deal(address(eth), USER1, ethAmount);
+    Utils.spokeSupply(vm, hub, spoke1, ethId, USER1, ethAmount, USER1);
+
+    // USER2 supply dai
+    deal(address(dai), USER2, daiAmount);
+    Utils.spokeSupply(vm, hub, spoke1, daiId, USER2, daiAmount, USER2);
+
+    // set reserve not borrowable
+    Utils.updateBorrowable(spoke1, daiId, false);
+
+    // USER1 draw half of dai reserve liquidity
+    vm.prank(USER1);
+    vm.expectRevert(TestErrors.RESERVE_NOT_BORROWABLE);
+    ISpoke(spoke1).borrow(daiId, USER1, daiAmount / 2);
   }
 
   function test_borrow() public {
@@ -199,6 +283,34 @@ contract SpokeTest is BaseTest {
     assertEq(user1Data.supplyShares, 0, 'wrong user supply shares post-withdraw');
     assertEq(user1Data.debtShares, 0, 'wrong user debt shares post-withdraw');
   }
+
+  function test_repay_revertsWith_repay_exceeds_debt() public {
+    uint256 daiId = 0;
+    uint256 ethId = 1;
+    uint256 daiAmount = 100e18;
+    uint256 ethAmount = 10e18;
+
+    uint256 drawAmount = daiAmount / 2;
+    uint256 restoreAmount = drawAmount + 1;
+
+    // USER1 supply eth
+    deal(address(eth), USER1, ethAmount);
+    Utils.spokeSupply(vm, hub, spoke1, ethId, USER1, ethAmount, USER1);
+
+    // USER2 supply dai
+    deal(address(dai), USER2, daiAmount);
+    Utils.spokeSupply(vm, hub, spoke1, daiId, USER2, daiAmount, USER2);
+
+    // USER1 borrow half of dai reserve liquidity
+    Utils.borrow(vm, spoke1, daiId, USER1, drawAmount, USER1);
+
+    // spoke1 restore half of drawn dai liquidity
+    vm.startPrank(USER1);
+    IERC20(address(dai)).approve(address(spoke1), restoreAmount);
+    vm.expectRevert(TestErrors.REPAY_EXCEEDS_DEBT);
+    ISpoke(address(spoke1)).repay(daiId, restoreAmount);
+    vm.stopPrank();
+  }
   function test_repay() public {
     uint256 daiId = 0;
     uint256 ethId = 1;
@@ -261,5 +373,78 @@ contract SpokeTest is BaseTest {
     assertEq(eth.balanceOf(address(hub)), ethAmount, 'wrong hub eth final balance');
     assertEq(eth.balanceOf(USER1), 0, 'wrong USER1 eth final balance');
     assertEq(eth.balanceOf(USER2), 0, 'wrong USER2 eth final balance');
+  }
+
+  function test_updateReserveConfig() public {
+    uint256 daiId = 0;
+
+    Spoke.Reserve memory reserveData = spoke1.getReserve(daiId);
+
+    Spoke.ReserveConfig memory newReserveConfig = Spoke.ReserveConfig({
+      lt: reserveData.config.lt + 1,
+      lb: reserveData.config.lb + 1,
+      borrowable: !reserveData.config.borrowable,
+      collateral: !reserveData.config.collateral
+    });
+    vm.expectEmit(address(spoke1));
+    emit ReserveConfigUpdated(
+      daiId,
+      newReserveConfig.lt,
+      newReserveConfig.lb,
+      newReserveConfig.borrowable,
+      newReserveConfig.collateral
+    );
+    spoke1.updateReserveConfig(daiId, newReserveConfig);
+
+    reserveData = spoke1.getReserve(daiId);
+
+    assertEq(reserveData.config.lt, newReserveConfig.lt, 'wrong lt');
+    assertEq(reserveData.config.lb, newReserveConfig.lb, 'wrong lb');
+    assertEq(reserveData.config.borrowable, newReserveConfig.borrowable, 'wrong borrowable');
+    assertEq(reserveData.config.collateral, newReserveConfig.collateral, 'wrong collateral');
+  }
+
+  function test_setUsingAsCollateral_revertsWith_reserve_not_collateral() public {
+    uint256 daiId = 0;
+    bool newCollateral = false;
+    bool usingAsCollateral = true;
+    Utils.updateCollateral(spoke1, daiId, newCollateral);
+
+    vm.prank(USER1);
+    vm.expectRevert(TestErrors.RESERVE_NOT_COLLATERAL);
+    ISpoke(spoke1).setUsingAsCollateral(daiId, usingAsCollateral);
+  }
+
+  function test_setUsingAsCollateral_revertsWith_no_supply() public {
+    uint256 daiId = 0;
+    bool newCollateral = true;
+    bool usingAsCollateral = true;
+    Utils.updateCollateral(spoke1, daiId, newCollateral);
+
+    vm.prank(USER1);
+    vm.expectRevert(TestErrors.NO_SUPPLY);
+    ISpoke(spoke1).setUsingAsCollateral(daiId, usingAsCollateral);
+  }
+
+  function test_setUsingAsCollateral() public {
+    uint256 daiId = 0;
+    bool newCollateral = true;
+    bool usingAsCollateral = true;
+    uint256 daiAmount = 100e18;
+
+    // ensure DAI is allowed as collateral
+    Utils.updateCollateral(spoke1, daiId, newCollateral);
+
+    // USER1 supply dai into spoke1
+    deal(address(dai), USER1, daiAmount);
+    Utils.spokeSupply(vm, hub, spoke1, daiId, USER1, daiAmount, USER1);
+
+    vm.prank(USER1);
+    vm.expectEmit(address(spoke1));
+    emit UsingAsCollateral(daiId, USER1, usingAsCollateral);
+    ISpoke(spoke1).setUsingAsCollateral(daiId, usingAsCollateral);
+
+    Spoke.UserConfig memory userData = spoke1.getUser(daiId, USER1);
+    assertEq(userData.usingAsCollateral, usingAsCollateral, 'wrong usingAsCollateral');
   }
 }
