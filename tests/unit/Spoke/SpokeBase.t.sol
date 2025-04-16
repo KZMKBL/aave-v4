@@ -7,7 +7,14 @@ import {KeyValueListInMemory} from 'src/libraries/helpers/KeyValueListInMemory.s
 contract SpokeBase is Base {
   using PercentageMath for uint256;
   using WadRayMath for uint256;
+  using WadRayMathExtended for uint256;
   using KeyValueListInMemory for KeyValueListInMemory.List;
+
+  struct Debts {
+    uint256 baseDebt;
+    uint256 premiumDebt;
+    uint256 totalDebt;
+  }
 
   struct TestData {
     DataTypes.Reserve data;
@@ -361,9 +368,9 @@ contract SpokeBase is Base {
     uint256 assetId,
     DataTypes.UserPosition memory userPos
   ) internal view returns (DebtData memory userDebt) {
-    userDebt.premiumDebt =
-      userPos.realizedPremium +
-      (hub.convertToDrawnAssets(assetId, userPos.premiumDrawnShares) - userPos.premiumOffset);
+    uint256 accruedPremium = hub.convertToPremiumDrawnAssets(assetId, userPos.premiumDrawnShares) -
+      userPos.premiumOffset;
+    userDebt.premiumDebt = userPos.realizedPremium + accruedPremium;
     userDebt.baseDebt = hub.convertToDrawnAssets(assetId, userPos.baseDrawnShares);
     userDebt.totalDebt = userDebt.baseDebt + userDebt.premiumDebt;
   }
@@ -434,7 +441,7 @@ contract SpokeBase is Base {
     userPos.premiumDrawnShares = hub.convertToDrawnShares(assetId, debtAmount).percentMul(
       riskPremium
     );
-    userPos.premiumOffset = hub.convertToDrawnAssets(assetId, userPos.premiumDrawnShares);
+    userPos.premiumOffset = hub.convertToPremiumDrawnAssets(assetId, userPos.premiumDrawnShares);
     userPos.realizedPremium = expectedRealizedPremium;
     userPos.suppliedShares = hub.convertToSuppliedShares(assetId, suppliedAmount);
   }
@@ -448,7 +455,8 @@ contract SpokeBase is Base {
   ) internal view returns (uint256) {
     uint256 assetId = spoke.getReserve(reserveId).assetId;
     DataTypes.UserPosition memory userPos = getUserInfo(spoke, user, assetId);
-    return hub.convertToDrawnAssets(assetId, userPos.premiumDrawnShares) - userPos.premiumOffset;
+    return
+      hub.convertToPremiumDrawnAssets(assetId, userPos.premiumDrawnShares) - userPos.premiumOffset;
   }
 
   /// assert that realized premium matches naively calculated value
@@ -462,13 +470,13 @@ contract SpokeBase is Base {
     uint256 assetId = spoke.getReserve(reserveId).assetId;
     uint256 accruedBase = MathUtils
       .calculateLinearInterest(hub.getAsset(assetId).baseBorrowRate, lastTimestamp)
-      .rayMul(prevBaseDebt);
+      .rayMulUp(prevBaseDebt);
 
     // equivalent to multiplying by risk premium (RP = premium drawn shares / base drawn shares)
     assertApproxEqAbs(
       userPos.realizedPremium,
       ((accruedBase - prevBaseDebt) * (userPos.premiumDrawnShares)) / (userPos.baseDrawnShares),
-      1, // precision loss due to calcs in asset amount and conversion to
+      3, // precision loss due to calcs in asset amount and conversion to
       'realized premium naive calc'
     );
   }
@@ -498,14 +506,14 @@ contract SpokeBase is Base {
       assertEq(
         baseDebt,
         hub.convertToDrawnAssets(assetId, userData.baseDrawnShares),
-        string(abi.encodePacked('user ', i, ' base debt ', label))
+        string.concat('user ', vm.toString(i), ' base debt ', label)
       );
       assertEq(
         premiumDebt,
         userData.realizedPremium +
-          hub.convertToDrawnAssets(assetId, userData.premiumDrawnShares) -
+          hub.convertToPremiumDrawnAssets(assetId, userData.premiumDrawnShares) -
           userData.premiumOffset,
-        string(abi.encodePacked('user ', i, ' premium debt ', label))
+        string.concat('user ', vm.toString(i), ' premium debt ', label)
       );
     }
 
@@ -524,6 +532,22 @@ contract SpokeBase is Base {
       usersDebt.totalDebt,
       string.concat('reserve vs sum users total debt ', label)
     );
+  }
+
+  function getUserDebt(
+    ISpoke spoke,
+    address user,
+    uint256 reserveId
+  ) internal view returns (Debts memory data) {
+    (data.baseDebt, data.premiumDebt) = spoke.getUserDebt(reserveId, user);
+    data.totalDebt = data.baseDebt + data.premiumDebt;
+  }
+
+  function assertEq(Debts memory a, Debts memory b) internal pure {
+    assertEq(a.baseDebt, b.baseDebt, 'base debt');
+    assertEq(a.premiumDebt, b.premiumDebt, 'premium debt');
+    assertEq(a.totalDebt, b.totalDebt, 'total debt');
+    assertEq(keccak256(abi.encode(a)), keccak256(abi.encode(b)), 'debt data'); // sanity
   }
 
   // function _calculateExpectedUserRP(address user, ISpoke spoke) internal view returns (uint256) {

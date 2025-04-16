@@ -147,7 +147,7 @@ contract Spoke is ISpoke {
 
     uint256 userPremiumDrawnShares = userPosition.premiumDrawnShares;
     uint256 userPremiumOffset = userPosition.premiumOffset;
-    uint256 accruedPremium = HUB.convertToDrawnAssets(assetId, userPremiumDrawnShares) -
+    uint256 accruedPremium = HUB.convertToPremiumDrawnAssets(assetId, userPremiumDrawnShares) -
       userPremiumOffset; // assets(premiumShares) - offset should never be < 0
     userPosition.premiumDrawnShares = 0;
     userPosition.premiumOffset = 0;
@@ -159,7 +159,7 @@ contract Spoke is ISpoke {
       -int256(userPremiumOffset),
       int256(accruedPremium)
     ); // unnecessary but we settle premium debt here
-    uint256 withdrawnShares = HUB.remove(reserve.assetId, amount, to);
+    uint256 withdrawnShares = HUB.remove(assetId, amount, to);
 
     userPosition.suppliedShares -= withdrawnShares;
     reserve.suppliedShares -= withdrawnShares;
@@ -170,8 +170,8 @@ contract Spoke is ISpoke {
     userPremiumDrawnShares = userPosition.premiumDrawnShares = userPosition
       .baseDrawnShares
       .percentMul(newUserRiskPremium);
-    userPremiumOffset = userPosition.premiumOffset = HUB.convertToDrawnAssets(
-      reserve.assetId,
+    userPremiumOffset = userPosition.premiumOffset = HUB.convertToPremiumDrawnAssets(
+      assetId,
       userPosition.premiumDrawnShares
     );
 
@@ -193,7 +193,7 @@ contract Spoke is ISpoke {
 
     uint256 userPremiumDrawnShares = userPosition.premiumDrawnShares;
     uint256 userPremiumOffset = userPosition.premiumOffset;
-    uint256 accruedPremium = HUB.convertToDrawnAssets(assetId, userPremiumDrawnShares) -
+    uint256 accruedPremium = HUB.convertToPremiumDrawnAssets(assetId, userPremiumDrawnShares) -
       userPremiumOffset; // assets(premiumShares) - offset should never be < 0
     userPosition.premiumDrawnShares = 0;
     userPosition.premiumOffset = 0;
@@ -216,8 +216,8 @@ contract Spoke is ISpoke {
     userPremiumDrawnShares = userPosition.premiumDrawnShares = userPosition
       .baseDrawnShares
       .percentMul(newUserRiskPremium);
-    userPremiumOffset = userPosition.premiumOffset = HUB.convertToDrawnAssets(
-      reserve.assetId,
+    userPremiumOffset = userPosition.premiumOffset = HUB.convertToPremiumDrawnAssets(
+      assetId,
       userPosition.premiumDrawnShares
     );
 
@@ -270,7 +270,7 @@ contract Spoke is ISpoke {
     userPremiumDrawnShares = userPosition.premiumDrawnShares = userPosition
       .baseDrawnShares
       .percentMul(newUserRiskPremium);
-    userPremiumOffset = userPosition.premiumOffset = HUB.convertToDrawnAssets(
+    userPremiumOffset = userPosition.premiumOffset = HUB.convertToPremiumDrawnAssets(
       reserve.assetId,
       userPosition.premiumDrawnShares
     );
@@ -460,18 +460,18 @@ contract Spoke is ISpoke {
     // todo validate user not trying to repay more
   }
 
+  // @dev allows donation on base debt
   function _calculateRestoreAmount(
     uint256 baseDebt,
     uint256 premiumDebt,
     uint256 amount
-  ) internal view returns (uint256, uint256) {
-    if (amount == type(uint256).max) {
+  ) internal pure returns (uint256, uint256) {
+    if (amount >= baseDebt + premiumDebt) {
       return (baseDebt, premiumDebt);
     }
     if (amount <= premiumDebt) {
       return (0, amount);
     }
-    // todo ensure `amount` is not greater than total debt?
     return (amount - premiumDebt, premiumDebt);
   }
 
@@ -686,10 +686,14 @@ contract Spoke is ISpoke {
     DataTypes.UserPosition storage userPosition,
     uint256 assetId
   ) internal view returns (uint256, uint256) {
-    uint256 premiumDebt = userPosition.realizedPremium +
-      (HUB.convertToDrawnAssets(assetId, userPosition.premiumDrawnShares) -
-        userPosition.premiumOffset);
-    return (HUB.convertToDrawnAssets(assetId, userPosition.baseDrawnShares), premiumDebt);
+    uint256 accruedPremium = HUB.convertToPremiumDrawnAssets(
+      assetId,
+      userPosition.premiumDrawnShares
+    ) - userPosition.premiumOffset;
+    return (
+      HUB.convertToDrawnAssets(assetId, userPosition.baseDrawnShares),
+      userPosition.realizedPremium + accruedPremium
+    );
   }
 
   // todo rm reserve accounting here & fetch from hub
@@ -697,9 +701,12 @@ contract Spoke is ISpoke {
     DataTypes.Reserve storage reserve
   ) internal view returns (uint256, uint256) {
     uint256 assetId = reserve.assetId;
-    uint256 premiumDebt = reserve.realizedPremium +
-      (HUB.convertToDrawnAssets(assetId, reserve.premiumDrawnShares) - reserve.premiumOffset);
-    return (HUB.convertToDrawnAssets(assetId, reserve.baseDrawnShares), premiumDebt);
+    uint256 accruedPremium = HUB.convertToPremiumDrawnAssets(assetId, reserve.premiumDrawnShares) -
+      reserve.premiumOffset;
+    return (
+      HUB.convertToDrawnAssets(assetId, reserve.baseDrawnShares),
+      reserve.realizedPremium + accruedPremium
+    );
   }
 
   // todo optimize, merge logic duped borrow/repay, rename
@@ -722,13 +729,15 @@ contract Spoke is ISpoke {
       if (_isBorrowing(userPosition) && assetId != assetIdToAvoid) {
         uint256 oldUserPremiumDrawnShares = userPosition.premiumDrawnShares;
         uint256 oldUserPremiumOffset = userPosition.premiumOffset;
-        uint256 accruedUserPremium = HUB.convertToDrawnAssets(assetId, oldUserPremiumDrawnShares) -
-          oldUserPremiumOffset;
+        uint256 accruedUserPremium = HUB.convertToPremiumDrawnAssets(
+          assetId,
+          oldUserPremiumDrawnShares
+        ) - oldUserPremiumOffset;
 
         userPosition.premiumDrawnShares = userPosition.baseDrawnShares.percentMul(
           newUserRiskPremium
         );
-        userPosition.premiumOffset = HUB.convertToDrawnAssets(
+        userPosition.premiumOffset = HUB.convertToPremiumDrawnAssets(
           assetId,
           userPosition.premiumDrawnShares
         );
