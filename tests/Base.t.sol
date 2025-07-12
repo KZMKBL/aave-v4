@@ -164,6 +164,35 @@ abstract contract Base is Test {
     uint256 outstandingPremium;
   }
 
+  struct AssetPosition {
+    uint256 assetId;
+    uint256 suppliedShares;
+    uint256 suppliedAmount;
+    uint256 baseDrawnShares;
+    uint256 baseDebt;
+    uint256 premiumDrawnShares;
+    uint256 premiumOffset;
+    uint256 realizedPremium;
+    uint256 premiumDebt;
+    uint40 lastUpdateTimestamp;
+    uint256 availableLiquidity;
+    uint256 baseDebtIndex;
+    uint256 baseBorrowRate;
+  }
+
+  struct ReservePosition {
+    uint256 reserveId;
+    uint256 assetId;
+    uint256 suppliedShares;
+    uint256 suppliedAmount;
+    uint256 baseDrawnShares;
+    uint256 baseDebt;
+    uint256 premiumDrawnShares;
+    uint256 premiumOffset;
+    uint256 realizedPremium;
+    uint256 premiumDebt;
+  }
+
   mapping(ISpoke => SpokeInfo) internal spokeInfo;
 
   function setUp() public virtual {
@@ -995,11 +1024,13 @@ abstract contract Base is Test {
     uint256 assetId,
     bool newActiveFlag
   ) internal {
-    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAsset(assetId).config;
+    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAssetConfig(assetId);
     assetConfig.active = newActiveFlag;
 
     vm.prank(HUB_ADMIN);
     liquidityHub.updateAssetConfig(assetId, assetConfig);
+
+    assertEq(liquidityHub.getAssetConfig(assetId).active, newActiveFlag);
   }
 
   function updateAssetPaused(
@@ -1007,11 +1038,13 @@ abstract contract Base is Test {
     uint256 assetId,
     bool newPausedFlag
   ) internal {
-    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAsset(assetId).config;
+    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAssetConfig(assetId);
     assetConfig.paused = newPausedFlag;
 
     vm.prank(HUB_ADMIN);
     liquidityHub.updateAssetConfig(assetId, assetConfig);
+
+    assertEq(liquidityHub.getAssetConfig(assetId).paused, newPausedFlag);
   }
 
   function updateAssetFrozen(
@@ -1019,11 +1052,13 @@ abstract contract Base is Test {
     uint256 assetId,
     bool newFrozenFlag
   ) internal {
-    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAsset(assetId).config;
+    DataTypes.AssetConfig memory assetConfig = liquidityHub.getAssetConfig(assetId);
     assetConfig.frozen = newFrozenFlag;
 
     vm.prank(HUB_ADMIN);
     liquidityHub.updateAssetConfig(assetId, assetConfig);
+
+    assertEq(liquidityHub.getAssetConfig(assetId).frozen, newFrozenFlag);
   }
 
   function updateAssetFeeReceiver(
@@ -1039,11 +1074,13 @@ abstract contract Base is Test {
   }
 
   function updateReserveFrozenFlag(ISpoke spoke, uint256 reserveId, bool newFrozenFlag) internal {
-    DataTypes.ReserveConfig memory config = spoke.getReserve(reserveId).config;
+    DataTypes.ReserveConfig memory config = spoke.getReserveConfig(reserveId);
     config.frozen = newFrozenFlag;
 
     vm.prank(SPOKE_ADMIN);
     spoke.updateReserveConfig(reserveId, config);
+
+    assertEq(spoke.getReserveConfig(reserveId).frozen, newFrozenFlag);
   }
 
   function updateReservePausedFlag(ISpoke spoke, uint256 reserveId, bool newPausedFlag) internal {
@@ -2070,5 +2107,85 @@ abstract contract Base is Test {
       ISpoke.UserDynamicConfigRefreshedAll.selector,
       ISpoke.UserDynamicConfigRefreshedSingle.selector
     );
+  }
+
+  // @dev Helper function to get asset position, valid if no time has passed since last action
+  function getAssetPosition(
+    ILiquidityHub hub,
+    uint256 assetId
+  ) internal view returns (AssetPosition memory) {
+    DataTypes.Asset memory assetData = hub.getAsset(assetId);
+    (uint256 baseDebt, uint256 premiumDebt) = hub.getAssetDebt(assetId);
+    return
+      AssetPosition({
+        assetId: assetId,
+        availableLiquidity: assetData.availableLiquidity,
+        suppliedShares: assetData.suppliedShares,
+        suppliedAmount: hub.getAssetSuppliedAmount(assetId),
+        baseDrawnShares: assetData.baseDrawnShares,
+        baseDebt: baseDebt,
+        premiumDrawnShares: assetData.premiumDrawnShares,
+        premiumOffset: assetData.premiumOffset,
+        realizedPremium: assetData.realizedPremium,
+        premiumDebt: premiumDebt,
+        lastUpdateTimestamp: uint40(assetData.lastUpdateTimestamp),
+        baseDebtIndex: assetData.baseDebtIndex,
+        baseBorrowRate: assetData.baseBorrowRate
+      });
+  }
+
+  function getReservePosition(
+    ISpoke spoke,
+    function(ISpoke) internal view returns (uint256) reserveIdFn
+  ) internal view returns (ReservePosition memory) {
+    return getReservePosition(spoke, reserveIdFn(spoke));
+  }
+
+  function getReservePosition(
+    ISpoke spoke,
+    uint256 reserveId
+  ) internal view returns (ReservePosition memory) {
+    uint256 assetId = spoke.getReserve(reserveId).assetId;
+    DataTypes.SpokeData memory spokeData = hub.getSpoke(assetId, address(spoke));
+    (uint256 baseDebt, uint256 premiumDebt) = hub.getSpokeDebt(assetId, address(spoke));
+    return
+      ReservePosition({
+        reserveId: reserveId,
+        assetId: assetId,
+        suppliedShares: spokeData.suppliedShares,
+        suppliedAmount: hub.getSpokeSuppliedAmount(assetId, address(spoke)),
+        baseDrawnShares: spokeData.baseDrawnShares,
+        baseDebt: baseDebt,
+        premiumDrawnShares: spokeData.premiumDrawnShares,
+        premiumOffset: spokeData.premiumOffset,
+        realizedPremium: spokeData.realizedPremium,
+        premiumDebt: premiumDebt
+      });
+  }
+
+  function assertEq(ReservePosition memory reserve, AssetPosition memory asset) internal pure {
+    assertEq(reserve.assetId, asset.assetId, 'assetId');
+    assertEq(reserve.suppliedShares, asset.suppliedShares, 'suppliedShares');
+    assertEq(reserve.suppliedAmount, asset.suppliedAmount, 'suppliedAmount');
+    assertEq(reserve.baseDrawnShares, asset.baseDrawnShares, 'baseDrawnShares');
+    assertEq(reserve.baseDebt, asset.baseDebt, 'baseDebt');
+    assertEq(reserve.premiumDrawnShares, asset.premiumDrawnShares, 'premiumDrawnShares');
+    assertEq(reserve.premiumOffset, asset.premiumOffset, 'premiumOffset');
+    assertEq(reserve.realizedPremium, asset.realizedPremium, 'realizedPremium');
+    assertEq(reserve.premiumDebt, asset.premiumDebt, 'premiumDebt');
+  }
+
+  function assertEq(ReservePosition memory a, ReservePosition memory b) internal pure {
+    assertEq(a.reserveId, b.reserveId, 'reserveId');
+    assertEq(a.assetId, b.assetId, 'assetId');
+    assertEq(a.suppliedShares, b.suppliedShares, 'suppliedShares');
+    assertEq(a.suppliedAmount, b.suppliedAmount, 'suppliedAmount');
+    assertEq(a.baseDrawnShares, b.baseDrawnShares, 'baseDrawnShares');
+    assertEq(a.baseDebt, b.baseDebt, 'baseDebt');
+    assertEq(a.premiumDrawnShares, b.premiumDrawnShares, 'premiumDrawnShares');
+    assertEq(a.premiumOffset, b.premiumOffset, 'premiumOffset');
+    assertEq(a.realizedPremium, b.realizedPremium, 'realizedPremium');
+    assertEq(a.premiumDebt, b.premiumDebt, 'premiumDebt');
+    assertEq(abi.encode(a), abi.encode(b)); // sanity check
   }
 }
