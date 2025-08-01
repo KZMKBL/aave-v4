@@ -32,7 +32,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
   uint256 public constant MAX_COLLATERAL_RISK = 1000_00; // 1000.00%
 
   IAaveOracle public oracle;
-  uint256[] public reservesList; // todo: rm, not needed
 
   uint256 internal _reserveCount;
   mapping(address user => mapping(uint256 reserveId => DataTypes.UserPosition position))
@@ -101,15 +100,9 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
 
     _updateReservePriceSource(reserveId, priceSource);
 
-    reservesList.push(reserveId);
     _reserves[reserveId] = DataTypes.Reserve({
       reserveId: reserveId,
       assetId: assetId,
-      suppliedShares: 0,
-      baseDrawnShares: 0,
-      premiumDrawnShares: 0,
-      premiumOffset: 0,
-      realizedPremium: 0,
       config: config,
       dynamicConfigKey: dynamicConfigKey,
       decimals: asset.decimals,
@@ -192,7 +185,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
     uint256 suppliedShares = reserve.hub.add(reserve.assetId, amount, msg.sender);
 
     userPosition.suppliedShares += suppliedShares;
-    reserve.suppliedShares += suppliedShares;
 
     emit Supply(reserveId, msg.sender, onBehalfOf, suppliedShares);
   }
@@ -217,7 +209,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
     uint256 withdrawnShares = hub.remove(assetId, amount, msg.sender);
 
     userPosition.suppliedShares -= withdrawnShares;
-    reserve.suppliedShares -= withdrawnShares;
 
     // calc needs new user position, just updating base debt is enough
     uint256 newUserRiskPremium = _refreshAndValidateUserPosition(onBehalfOf); // validates HF
@@ -242,9 +233,7 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
 
     uint256 baseDrawnShares = hub.draw(assetId, amount, msg.sender);
 
-    reserve.baseDrawnShares += baseDrawnShares;
     userPosition.baseDrawnShares += baseDrawnShares;
-
     if (!positionStatus.isBorrowing(reserveId)) {
       positionStatus.setBorrowing(reserveId, true);
     }
@@ -293,10 +282,8 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
       msg.sender
     );
 
-    _settlePremiumDebt(reserve, userPosition, premiumDelta);
-    reserve.baseDrawnShares -= vars.restoredShares;
+    _settlePremiumDebt(userPosition, premiumDelta);
     userPosition.baseDrawnShares -= vars.restoredShares;
-
     if (userPosition.baseDrawnShares == 0) {
       _positionStatus[onBehalfOf].setBorrowing(reserveId, false);
     }
@@ -431,16 +418,16 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
     return baseDebt + premiumDebt;
   }
 
+  /// @dev We do not differentiate between duplicate reserves (assetId) on the same hub
   function getReserveSuppliedAmount(uint256 reserveId) external view returns (uint256) {
-    return
-      _reserves[reserveId].hub.previewRemoveByShares(
-        _reserves[reserveId].assetId,
-        _reserves[reserveId].suppliedShares
-      );
+    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    return reserve.hub.getSpokeSuppliedAmount(reserve.assetId, address(this));
   }
 
+  /// @dev We do not differentiate between duplicate reserves (assetId) on the same hub
   function getReserveSuppliedShares(uint256 reserveId) external view returns (uint256) {
-    return _reserves[reserveId].suppliedShares;
+    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    return reserve.hub.getSpokeSuppliedShares(reserve.assetId, address(this));
   }
 
   function getUserSuppliedAmount(uint256 reserveId, address user) public view returns (uint256) {
@@ -460,18 +447,17 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
   }
 
   function getReserveDebt(uint256 reserveId) external view returns (uint256, uint256) {
-    (uint256 baseDebt, uint256 premiumDebt) = _getReserveDebt(_reserves[reserveId]);
-    return (baseDebt, premiumDebt);
+    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    return reserve.hub.getSpokeDebt(reserve.assetId, address(this));
   }
 
   function getReserveTotalDebt(uint256 reserveId) external view returns (uint256) {
-    (uint256 baseDebt, uint256 premiumDebt) = _getReserveDebt(_reserves[reserveId]);
-    return baseDebt + premiumDebt;
-  }
-
-  function getReserveRiskPremium(uint256 reserveId) external view returns (uint256) {
     DataTypes.Reserve storage reserve = _reserves[reserveId];
-    return reserve.premiumDrawnShares.rayDivDown(reserve.baseDrawnShares); // trailing
+    (uint256 baseDebt, uint256 premiumDebt) = reserve.hub.getSpokeDebt(
+      reserve.assetId,
+      address(this)
+    );
+    return baseDebt + premiumDebt;
   }
 
   function getUserRiskPremium(address user) external view returns (uint256) {
@@ -714,36 +700,12 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
   }
 
   function _settlePremiumDebt(
-    DataTypes.Reserve storage reserve,
     DataTypes.UserPosition storage userPosition,
     DataTypes.PremiumDelta memory premiumDelta
   ) internal {
-    _applyPremiumDelta(reserve, premiumDelta);
     userPosition.premiumDrawnShares = 0;
     userPosition.premiumOffset = 0;
     userPosition.realizedPremium = _add(userPosition.realizedPremium, premiumDelta.realizedDelta);
-  }
-
-  function _refreshPremiumDebt(
-    DataTypes.Reserve storage reserve,
-    ILiquidityHub hub,
-    uint256 assetId,
-    uint256 reserveId,
-    address user,
-    DataTypes.PremiumDelta memory premiumDelta
-  ) internal {
-    hub.refreshPremiumDebt(assetId, premiumDelta);
-    _applyPremiumDelta(reserve, premiumDelta);
-    emit RefreshPremiumDebt(reserveId, user, premiumDelta);
-  }
-
-  function _applyPremiumDelta(
-    DataTypes.Reserve storage reserve,
-    DataTypes.PremiumDelta memory premiumDelta
-  ) internal {
-    reserve.premiumDrawnShares = _add(reserve.premiumDrawnShares, premiumDelta.drawnSharesDelta);
-    reserve.premiumOffset = _add(reserve.premiumOffset, premiumDelta.offsetDelta);
-    reserve.realizedPremium = _add(reserve.realizedPremium, premiumDelta.realizedDelta);
   }
 
   function _isPositionManager(address user, address manager) private view returns (bool) {
@@ -765,13 +727,13 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
     address user
   ) internal view returns (uint256, uint256, uint256, uint256, uint256) {
     DataTypes.CalculateUserAccountDataVars memory vars;
-    uint256 reservesListLength = reservesList.length;
+    uint256 reserveCount = _reserveCount;
     DataTypes.PositionStatus storage positionStatus = _positionStatus[user];
     KeyValueListInMemory.List memory list = KeyValueListInMemory.init(
-      positionStatus.collateralCount(reservesListLength)
+      positionStatus.collateralCount(reserveCount)
     );
 
-    while (vars.reserveId < reservesListLength) {
+    while (vars.reserveId < reserveCount) {
       if (!positionStatus.isUsingAsCollateralOrBorrowing(vars.reserveId)) {
         unchecked {
           ++vars.reserveId;
@@ -909,20 +871,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
     );
   }
 
-  // todo rm reserve accounting here & fetch from hub
-  function _getReserveDebt(
-    DataTypes.Reserve storage reserve
-  ) internal view returns (uint256, uint256) {
-    uint256 assetId = reserve.assetId;
-    ILiquidityHub hub = reserve.hub;
-    uint256 accruedPremium = hub.convertToDrawnAssets(assetId, reserve.premiumDrawnShares) -
-      reserve.premiumOffset;
-    return (
-      hub.previewRestoreByShares(assetId, reserve.baseDrawnShares),
-      reserve.realizedPremium + accruedPremium
-    );
-  }
-
   // todo optimize, merge logic duped borrow/repay, rename
   /**
    * @dev Trigger risk premium update on all drawn reserves of `user`.
@@ -947,7 +895,7 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
 
         uint256 oldUserPremiumDrawnShares = userPosition.premiumDrawnShares;
         uint256 oldUserPremiumOffset = userPosition.premiumOffset;
-        uint256 accruedUserPremium = vars.hub.convertToDrawnAssets(
+        uint256 accruedUserPremium = vars.hub.previewRestoreByShares(
           vars.assetId,
           oldUserPremiumDrawnShares
         ) - oldUserPremiumOffset;
@@ -962,24 +910,16 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
         );
         userPosition.realizedPremium += accruedUserPremium;
 
-        int256 premiumDrawnSharesDelta = _signedDiff(
-          userPosition.premiumDrawnShares,
-          oldUserPremiumDrawnShares
-        );
-        if (!vars.premiumIncrease) vars.premiumIncrease = premiumDrawnSharesDelta > 0;
+        vars.premiumDelta = DataTypes.PremiumDelta({
+          drawnSharesDelta: _signedDiff(userPosition.premiumDrawnShares, oldUserPremiumDrawnShares),
+          offsetDelta: _signedDiff(userPosition.premiumOffset, oldUserPremiumOffset),
+          realizedDelta: int256(accruedUserPremium)
+        });
 
-        _refreshPremiumDebt(
-          reserve,
-          vars.hub,
-          vars.assetId,
-          vars.reserveId,
-          user,
-          DataTypes.PremiumDelta({
-            drawnSharesDelta: premiumDrawnSharesDelta,
-            offsetDelta: _signedDiff(userPosition.premiumOffset, oldUserPremiumOffset),
-            realizedDelta: int256(accruedUserPremium)
-          })
-        );
+        if (!vars.premiumIncrease) vars.premiumIncrease = vars.premiumDelta.drawnSharesDelta > 0;
+
+        vars.hub.refreshPremiumDebt(vars.assetId, vars.premiumDelta);
+        emit RefreshPremiumDebt(vars.reserveId, user, vars.premiumDelta);
       }
       unchecked {
         ++vars.reserveId;
@@ -1024,8 +964,7 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
           premiumDebtRestored,
           premiumDelta
         );
-        _settlePremiumDebt(reserve, userPosition, premiumDelta);
-        reserve.baseDrawnShares -= deficitShares;
+        _settlePremiumDebt(userPosition, premiumDelta);
         userPosition.baseDrawnShares -= deficitShares;
         // newUserRiskPremium is 0 due to no collateral remaining
         // non-zero deficit means user ends up with zero total debt
@@ -1039,9 +978,9 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
   }
 
   function _refreshDynamicConfig(address user) internal {
-    uint256 reservesListLength = reservesList.length;
+    uint256 reserveCount = _reserveCount;
     uint256 reserveId;
-    while (reserveId < reservesListLength) {
+    while (reserveId < reserveCount) {
       if (_positionStatus[user].isUsingAsCollateral(reserveId)) {
         _userPositions[user][reserveId].configKey = _reserves[reserveId].dynamicConfigKey;
       }
@@ -1143,9 +1082,8 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
           liquidator
         );
         // debt accounting
-        _settlePremiumDebt(debtReserve, userDebtPosition, vars.premiumDelta);
+        _settlePremiumDebt(userDebtPosition, vars.premiumDelta);
         userDebtPosition.baseDrawnShares -= vars.restoredShares;
-        vars.totalRestoredShares += vars.restoredShares;
       }
 
       if (userDebtPosition.baseDrawnShares == 0) {
@@ -1160,7 +1098,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
         _notifyRiskPremiumUpdate(vars.user, vars.newUserRiskPremium);
       }
 
-      vars.totalWithdrawnShares += vars.withdrawnShares;
       vars.totalLiquidationFeeShares += vars.liquidationFeeShares;
 
       emit LiquidationCall(
@@ -1176,10 +1113,6 @@ contract Spoke is ISpoke, Multicall, AccessManaged {
         ++vars.i;
       }
     }
-
-    // TODO: rm when dupe reserve accounting is rm
-    debtReserve.baseDrawnShares -= vars.totalRestoredShares;
-    collateralReserve.suppliedShares -= vars.totalWithdrawnShares;
 
     if (vars.totalLiquidationFeeShares > 0) {
       vars.collateralReserveHub.payFee(vars.collateralAssetId, vars.totalLiquidationFeeShares);
