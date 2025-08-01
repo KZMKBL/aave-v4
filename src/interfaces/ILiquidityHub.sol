@@ -39,6 +39,7 @@ interface ILiquidityHub is ILiquidityHubBase, IAccessManaged {
     uint256 totalRestoredAmount
   );
   event AccrueFees(uint256 indexed assetId, uint256 shares);
+  event TransferShares(uint256 indexed assetId, uint256 shares, address fromSpoke, address toSpoke);
 
   /**
    * @notice Emitted when some deficit is eliminated.
@@ -47,7 +48,7 @@ interface ILiquidityHub is ILiquidityHubBase, IAccessManaged {
    * @param removedShares The amount of shares removed.
    * @param amount The amount of deficit eliminated.
    */
-  event DeficitEliminated(
+  event EliminateDeficit(
     uint256 indexed assetId,
     address indexed spoke,
     uint256 removedShares,
@@ -63,6 +64,7 @@ interface ILiquidityHub is ILiquidityHubBase, IAccessManaged {
   error InvalidRemoveAmount();
   error InvalidRestoreAmount();
   error SuppliedAmountExceeded(uint256 suppliedAmount);
+  error SuppliedSharesExceeded(uint256 suppliedShares);
   error NotAvailableLiquidity(uint256 availableLiquidity);
   error InvalidDrawAmount();
   error DrawCapExceeded(uint256 drawCap);
@@ -157,6 +159,15 @@ interface ILiquidityHub is ILiquidityHubBase, IAccessManaged {
     uint256 premiumAmount,
     DataTypes.PremiumDelta calldata premiumDelta
   ) external returns (uint256);
+
+  /**
+   * @notice Allows a spoke to transfer its supplied shares of an asset to another spoke.
+   * @dev Only callable by spokes.
+   * @param assetId The identifier of the asset.
+   * @param shares The amount of shares to move.
+   * @param toSpoke The address of the spoke to move shares to.
+   */
+  function transferShares(uint256 assetId, uint256 shares, address toSpoke) external;
 
   /**
    * @notice Eliminates deficit by removing supplied shares of caller spoke.

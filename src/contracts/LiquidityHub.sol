@@ -302,7 +302,7 @@ contract LiquidityHub is ILiquidityHub, AccessManaged {
 
     asset.updateBorrowRate(assetId);
 
-    emit DeficitEliminated(assetId, msg.sender, removedShares, amount);
+    emit EliminateDeficit(assetId, msg.sender, removedShares, amount);
 
     return removedShares;
   }
@@ -335,16 +335,23 @@ contract LiquidityHub is ILiquidityHub, AccessManaged {
 
     asset.accrue(assetId, receiver);
 
-    uint256 suppliedShares = sender.suppliedShares;
-    uint256 suppliedAssets = asset.toSuppliedAssetsDown(suppliedShares);
-    uint256 feeAmount = asset.toSuppliedAssetsDown(feeShares);
-    require(feeAmount <= suppliedAssets, SuppliedAmountExceeded(suppliedAssets));
+    _transferShares(sender, receiver, feeShares);
 
-    sender.suppliedShares = suppliedShares - feeShares;
-    receiver.suppliedShares += feeShares;
+    emit TransferShares(assetId, feeShares, msg.sender, feeReceiver);
+  }
 
-    emit Remove(assetId, msg.sender, feeShares, feeAmount);
-    emit Add(assetId, feeReceiver, feeShares, feeAmount);
+  /// @inheritdoc ILiquidityHub
+  function transferShares(uint256 assetId, uint256 shares, address toSpoke) external {
+    DataTypes.SpokeData storage sender = _spokes[assetId][msg.sender];
+    DataTypes.SpokeData storage receiver = _spokes[assetId][toSpoke];
+    DataTypes.Asset storage asset = _assets[assetId];
+    _validateTransferShares(asset, sender, receiver, shares);
+
+    asset.accrue(assetId, _spokes[assetId][asset.config.feeReceiver]);
+
+    _transferShares(sender, receiver, shares);
+
+    emit TransferShares(assetId, shares, msg.sender, toSpoke);
   }
 
   /// @inheritdoc ILiquidityHub
@@ -427,28 +434,22 @@ contract LiquidityHub is ILiquidityHub, AccessManaged {
   }
 
   /// @inheritdoc ILiquidityHub
-  function convertToSuppliedAssets(
-    uint256 assetId,
-    uint256 shares
-  ) external view returns (uint256) {
+  function convertToSuppliedAssets(uint256 assetId, uint256 shares) public view returns (uint256) {
     return _assets[assetId].toSuppliedAssetsDown(shares);
   }
 
   /// @inheritdoc ILiquidityHub
-  function convertToSuppliedShares(
-    uint256 assetId,
-    uint256 assets
-  ) external view returns (uint256) {
+  function convertToSuppliedShares(uint256 assetId, uint256 assets) public view returns (uint256) {
     return _assets[assetId].toSuppliedSharesDown(assets);
   }
 
   /// @inheritdoc ILiquidityHub
-  function convertToDrawnAssets(uint256 assetId, uint256 shares) external view returns (uint256) {
+  function convertToDrawnAssets(uint256 assetId, uint256 shares) public view returns (uint256) {
     return _assets[assetId].toDrawnAssetsUp(shares);
   }
 
   /// @inheritdoc ILiquidityHub
-  function convertToDrawnShares(uint256 assetId, uint256 assets) external view returns (uint256) {
+  function convertToDrawnShares(uint256 assetId, uint256 assets) public view returns (uint256) {
     return _assets[assetId].toDrawnSharesDown(assets);
   }
 
@@ -559,6 +560,18 @@ contract LiquidityHub is ILiquidityHub, AccessManaged {
     require(asset.premiumDebt() + premiumAmount - premiumDebtBefore <= 2, InvalidDebtChange());
   }
 
+  function _transferShares(
+    DataTypes.SpokeData storage sender,
+    DataTypes.SpokeData storage receiver,
+    uint256 shares
+  ) internal {
+    uint256 suppliedShares = sender.suppliedShares;
+    require(shares <= suppliedShares, SuppliedSharesExceeded(suppliedShares));
+
+    sender.suppliedShares = suppliedShares - shares;
+    receiver.suppliedShares += shares;
+  }
+
   function _validateAdd(
     DataTypes.Asset storage asset,
     DataTypes.SpokeData storage spoke,
@@ -660,6 +673,20 @@ contract LiquidityHub is ILiquidityHub, AccessManaged {
   ) internal view {
     require(senderSpoke.config.active, SpokeNotActive());
     require(feeShares != 0, InvalidFeeShares());
+  }
+
+  function _validateTransferShares(
+    DataTypes.Asset storage asset,
+    DataTypes.SpokeData storage sender,
+    DataTypes.SpokeData storage receiver,
+    uint256 shares
+  ) internal view {
+    require(sender.config.active && receiver.config.active, SpokeNotActive());
+    require(shares > 0, InvalidSharesAmount());
+    require(
+      asset.toSuppliedAssetsDown(receiver.suppliedShares + shares) <= receiver.config.supplyCap,
+      SupplyCapExceeded(receiver.config.supplyCap)
+    );
   }
 
   // handles underflow
