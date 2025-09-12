@@ -218,14 +218,11 @@ contract Spoke is ISpoke, Multicall, AccessManaged, EIP712 {
   ) external onlyPositionManager(onBehalfOf) {
     DataTypes.Reserve storage reserve = _reserves[reserveId];
     DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    _validateWithdraw(reserve);
     uint256 assetId = reserve.assetId;
     IHubBase hub = reserve.hub;
 
-    // If uint256.max is passed, withdraw all user's supplied assets
-    if (amount == type(uint256).max) {
-      amount = hub.previewRemoveByShares(assetId, userPosition.suppliedShares);
-    }
-    _validateWithdraw(reserve, userPosition, amount);
+    amount = MathUtils.min(amount, hub.previewRemoveByShares(assetId, userPosition.suppliedShares));
 
     uint256 withdrawnShares = hub.remove(assetId, amount, msg.sender);
 
@@ -648,18 +645,9 @@ contract Spoke is ISpoke, Multicall, AccessManaged, EIP712 {
     require(!reserve.frozen, ReserveFrozen());
   }
 
-  function _validateWithdraw(
-    DataTypes.Reserve storage reserve,
-    DataTypes.UserPosition storage userPosition,
-    uint256 amount
-  ) internal view {
+  function _validateWithdraw(DataTypes.Reserve storage reserve) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
     require(!reserve.paused, ReservePaused());
-    uint256 suppliedAmount = reserve.hub.previewRemoveByShares(
-      reserve.assetId,
-      userPosition.suppliedShares
-    );
-    require(amount <= suppliedAmount, InsufficientSupply(suppliedAmount));
   }
 
   function _validateBorrow(DataTypes.Reserve storage reserve) internal view {
