@@ -421,7 +421,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
     // add USDX
     hub1.addAsset(
@@ -438,7 +439,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
     // add DAI
     hub1.addAsset(
@@ -455,7 +457,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
     // add WBTC
     hub1.addAsset(
@@ -472,7 +475,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
     // add USDY
     hub1.addAsset(
@@ -489,7 +493,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
     // add DAI again
     hub1.addAsset(
@@ -506,7 +511,8 @@ abstract contract Base is Test {
         feeReceiver: address(treasurySpoke),
         irStrategy: address(irStrategy),
         reinvestmentController: address(0)
-      })
+      }),
+      new bytes(0)
     );
 
     // configure oracle in spokes
@@ -955,7 +961,7 @@ abstract contract Base is Test {
     config.feeReceiver = newFeeReceiver;
 
     vm.prank(HUB_ADMIN);
-    hub.updateAssetConfig(assetId, config);
+    hub.updateAssetConfig(assetId, config, new bytes(0));
 
     assertEq(hub.getAssetConfig(assetId), config);
   }
@@ -969,7 +975,7 @@ abstract contract Base is Test {
     config.reinvestmentController = newReinvestmentController;
 
     vm.prank(HUB_ADMIN);
-    hub.updateAssetConfig(assetId, config);
+    hub.updateAssetConfig(assetId, config, new bytes(0));
 
     assertEq(hub.getAssetConfig(assetId), config);
   }
@@ -1119,7 +1125,7 @@ abstract contract Base is Test {
     DataTypes.AssetConfig memory config = hub1.getAssetConfig(assetId);
     config.liquidityFee = liquidityFee.toUint16();
     vm.prank(HUB_ADMIN);
-    hub1.updateAssetConfig(assetId, config);
+    hub1.updateAssetConfig(assetId, config, new bytes(0));
 
     assertEq(hub1.getAssetConfig(assetId), config);
   }
