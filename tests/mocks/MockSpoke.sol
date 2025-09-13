@@ -2,11 +2,11 @@
 // Copyright (c) 2025 Aave Labs
 pragma solidity ^0.8.0;
 
-import {Spoke, DataTypes, IHubBase, SafeCast, PositionStatus} from 'src/contracts/Spoke.sol';
+import {Spoke, ISpoke, IHubBase, SafeCast, PositionStatusMap} from 'src/contracts/Spoke.sol';
 
 contract MockSpoke is Spoke {
   using SafeCast for *;
-  using PositionStatus for *;
+  using PositionStatusMap for *;
 
   constructor(address oracle_) Spoke(oracle_) {}
 
@@ -18,9 +18,9 @@ contract MockSpoke is Spoke {
     uint256 amount,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
-    DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
+    Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
     uint256 assetId = reserve.assetId;
     IHubBase hub = reserve.hub;
 
@@ -29,9 +29,7 @@ contract MockSpoke is Spoke {
     userPosition.drawnShares += drawnShares.toUint128();
     positionStatus.setBorrowing(reserveId, true);
 
-    DataTypes.UserAccountData memory userAccountData = _calculateAndRefreshUserAccountData(
-      onBehalfOf
-    );
+    ISpoke.UserAccountData memory userAccountData = _calculateAndRefreshUserAccountData(onBehalfOf);
     _notifyRiskPremiumUpdate(onBehalfOf, userAccountData.userRiskPremium);
 
     emit Borrow(reserveId, msg.sender, onBehalfOf, drawnShares);

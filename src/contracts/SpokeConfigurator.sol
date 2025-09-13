@@ -4,7 +4,6 @@ pragma solidity ^0.8.0;
 
 import {SafeCast} from 'src/dependencies/openzeppelin/SafeCast.sol';
 import {Ownable2Step, Ownable} from 'src/dependencies/openzeppelin/Ownable2Step.sol';
-import {DataTypes} from 'src/libraries/types/DataTypes.sol';
 import {ISpoke} from 'src/interfaces/ISpoke.sol';
 import {ISpokeConfigurator} from 'src/interfaces/ISpokeConfigurator.sol';
 
@@ -38,7 +37,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 targetHealthFactor
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
+    ISpoke.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
     liquidationConfig.targetHealthFactor = targetHealthFactor.toUint128();
     targetSpoke.updateLiquidationConfig(liquidationConfig);
   }
@@ -49,7 +48,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 healthFactorForMaxBonus
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
+    ISpoke.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
     liquidationConfig.healthFactorForMaxBonus = healthFactorForMaxBonus.toUint64();
     targetSpoke.updateLiquidationConfig(liquidationConfig);
   }
@@ -60,7 +59,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 liquidationBonusFactor
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
+    ISpoke.LiquidationConfig memory liquidationConfig = targetSpoke.getLiquidationConfig();
     liquidationConfig.liquidationBonusFactor = liquidationBonusFactor.toUint16();
     targetSpoke.updateLiquidationConfig(liquidationConfig);
   }
@@ -68,7 +67,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
   /// @inheritdoc ISpokeConfigurator
   function updateLiquidationConfig(
     address spoke,
-    DataTypes.LiquidationConfig calldata liquidationConfig
+    ISpoke.LiquidationConfig calldata liquidationConfig
   ) external onlyOwner {
     ISpoke(spoke).updateLiquidationConfig(liquidationConfig);
   }
@@ -79,8 +78,8 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     address hub,
     uint256 assetId,
     address priceSource,
-    DataTypes.ReserveConfig calldata config,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    ISpoke.ReserveConfig calldata config,
+    ISpoke.DynamicReserveConfig calldata dynamicConfig
   ) external onlyOwner returns (uint256 reserveId) {
     return ISpoke(spoke).addReserve(hub, assetId, priceSource, config, dynamicConfig);
   }
@@ -88,7 +87,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
   /// @inheritdoc ISpokeConfigurator
   function updatePaused(address spoke, uint256 reserveId, bool paused) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+    ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
     reserveConfig.paused = paused;
     targetSpoke.updateReserveConfig(reserveId, reserveConfig);
   }
@@ -96,7 +95,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
   /// @inheritdoc ISpokeConfigurator
   function updateFrozen(address spoke, uint256 reserveId, bool frozen) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+    ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
     reserveConfig.frozen = frozen;
     targetSpoke.updateReserveConfig(reserveId, reserveConfig);
   }
@@ -104,7 +103,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
   /// @inheritdoc ISpokeConfigurator
   function updateBorrowable(address spoke, uint256 reserveId, bool borrowable) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+    ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
     reserveConfig.borrowable = borrowable;
     targetSpoke.updateReserveConfig(reserveId, reserveConfig);
   }
@@ -116,7 +115,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 collateralRisk
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+    ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
     reserveConfig.collateralRisk = collateralRisk.toUint24();
     targetSpoke.updateReserveConfig(reserveId, reserveConfig);
   }
@@ -128,8 +127,9 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint16 collateralFactor
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId
+    );
     dynamicReserveConfig.collateralFactor = collateralFactor;
     targetSpoke.addDynamicReserveConfig(reserveId, dynamicReserveConfig);
   }
@@ -142,8 +142,10 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint16 collateralFactor
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId, configKey);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId,
+      configKey
+    );
     dynamicReserveConfig.collateralFactor = collateralFactor;
     targetSpoke.updateDynamicReserveConfig(reserveId, configKey, dynamicReserveConfig);
   }
@@ -155,8 +157,9 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 liquidationBonus
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId
+    );
     dynamicReserveConfig.maxLiquidationBonus = liquidationBonus.toUint32();
     targetSpoke.addDynamicReserveConfig(reserveId, dynamicReserveConfig);
   }
@@ -169,8 +172,10 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 maxLiquidationBonus
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId, configKey);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId,
+      configKey
+    );
     dynamicReserveConfig.maxLiquidationBonus = maxLiquidationBonus.toUint32();
     targetSpoke.updateDynamicReserveConfig(reserveId, configKey, dynamicReserveConfig);
   }
@@ -182,8 +187,9 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 liquidationFee
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId
+    );
     dynamicReserveConfig.liquidationFee = liquidationFee.toUint16();
     targetSpoke.addDynamicReserveConfig(reserveId, dynamicReserveConfig);
   }
@@ -196,8 +202,10 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     uint256 liquidationFee
   ) external onlyOwner {
     ISpoke targetSpoke = ISpoke(spoke);
-    DataTypes.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke
-      .getDynamicReserveConfig(reserveId, configKey);
+    ISpoke.DynamicReserveConfig memory dynamicReserveConfig = targetSpoke.getDynamicReserveConfig(
+      reserveId,
+      configKey
+    );
     dynamicReserveConfig.liquidationFee = liquidationFee.toUint16();
     targetSpoke.updateDynamicReserveConfig(reserveId, configKey, dynamicReserveConfig);
   }
@@ -206,7 +214,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
   function addDynamicReserveConfig(
     address spoke,
     uint256 reserveId,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    ISpoke.DynamicReserveConfig calldata dynamicConfig
   ) external onlyOwner returns (uint16 configKey) {
     return ISpoke(spoke).addDynamicReserveConfig(reserveId, dynamicConfig);
   }
@@ -216,7 +224,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     address spoke,
     uint256 reserveId,
     uint16 configKey,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    ISpoke.DynamicReserveConfig calldata dynamicConfig
   ) external onlyOwner {
     ISpoke(spoke).updateDynamicReserveConfig(reserveId, configKey, dynamicConfig);
   }
@@ -226,7 +234,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     ISpoke targetSpoke = ISpoke(spoke);
     uint256 reserveCount = targetSpoke.getReserveCount();
     for (uint256 reserveId = 0; reserveId < reserveCount; ++reserveId) {
-      DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+      ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
       reserveConfig.paused = true;
       targetSpoke.updateReserveConfig(reserveId, reserveConfig);
     }
@@ -237,7 +245,7 @@ contract SpokeConfigurator is Ownable2Step, ISpokeConfigurator {
     ISpoke targetSpoke = ISpoke(spoke);
     uint256 reserveCount = targetSpoke.getReserveCount();
     for (uint256 reserveId = 0; reserveId < reserveCount; ++reserveId) {
-      DataTypes.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
+      ISpoke.ReserveConfig memory reserveConfig = targetSpoke.getReserveConfig(reserveId);
       reserveConfig.frozen = true;
       targetSpoke.updateReserveConfig(reserveId, reserveConfig);
     }

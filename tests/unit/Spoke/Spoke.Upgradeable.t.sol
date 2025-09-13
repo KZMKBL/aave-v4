@@ -36,7 +36,7 @@ contract SpokeUpgradeableTest is SpokeBase {
     address spokeProxyAddress = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
     address proxyAdminAddress = vm.computeCreateAddress(spokeProxyAddress, 1);
 
-    DataTypes.LiquidationConfig memory expectedLiquidationConfig = DataTypes.LiquidationConfig({
+    ISpoke.LiquidationConfig memory expectedLiquidationConfig = ISpoke.LiquidationConfig({
       targetHealthFactor: Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
       healthFactorForMaxBonus: 0,
       liquidationBonusFactor: 0

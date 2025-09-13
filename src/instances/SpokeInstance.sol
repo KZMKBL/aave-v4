@@ -2,7 +2,6 @@
 // Copyright (c) 2025 Aave Labs
 pragma solidity ^0.8.0;
 
-import {Constants} from 'src/libraries/helpers/Constants.sol';
 import {Spoke} from 'src/contracts/Spoke.sol';
 
 /**
@@ -22,7 +21,7 @@ contract SpokeInstance is Spoke {
     require(_authority != address(0), InvalidAddress());
     __AccessManaged_init(_authority);
     if (_liquidationConfig.targetHealthFactor == 0) {
-      _liquidationConfig.targetHealthFactor = Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD;
+      _liquidationConfig.targetHealthFactor = HEALTH_FACTOR_LIQUIDATION_THRESHOLD;
       emit UpdateLiquidationConfig(_liquidationConfig);
     }
   }

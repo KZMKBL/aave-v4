@@ -13,10 +13,8 @@ import {SignatureChecker} from 'src/dependencies/openzeppelin/SignatureChecker.s
 import {WadRayMath} from 'src/libraries/math/WadRayMath.sol';
 import {PercentageMath} from 'src/libraries/math/PercentageMath.sol';
 import {KeyValueList} from 'src/libraries/helpers/KeyValueList.sol';
-import {Constants} from 'src/libraries/helpers/Constants.sol';
-import {DataTypes} from 'src/libraries/types/DataTypes.sol';
 import {LiquidationLogic} from 'src/libraries/logic/LiquidationLogic.sol';
-import {PositionStatus} from 'src/libraries/configuration/PositionStatus.sol';
+import {PositionStatusMap} from 'src/libraries/configuration/PositionStatusMap.sol';
 import {MathUtils} from 'src/libraries/math/MathUtils.sol';
 
 import {IHubBase} from 'src/interfaces/IHubBase.sol';
@@ -33,23 +31,40 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   using WadRayMath for uint256;
   using PercentageMath for *;
   using KeyValueList for KeyValueList.List;
-  using PositionStatus for *;
+  using PositionStatusMap for *;
   using MathUtils for *;
+
+  /// @inheritdoc ISpoke
+  uint256 public constant MAX_RESERVE_ID = type(uint16).max;
+
+  /// @inheritdoc ISpoke
+  uint24 public constant MAX_COLLATERAL_RISK = 1000_00; // 1000.00%
+
+  /// @inheritdoc ISpoke
+  bytes32 public constant SET_USER_POSITION_MANAGER_TYPEHASH =
+    // keccak256('SetUserPositionManager(address positionManager,address user,bool approve,uint256 nonce,uint256 deadline)')
+    0x758d23a3c07218b7ea0b4f7f63903c4e9d5cbde72d3bcfe3e9896639025a0214;
+
+  /// @inheritdoc ISpoke
+  uint64 public constant HEALTH_FACTOR_LIQUIDATION_THRESHOLD =
+    LiquidationLogic.HEALTH_FACTOR_LIQUIDATION_THRESHOLD;
+
+  /// @inheritdoc ISpoke
+  uint256 public constant MIN_LEFTOVER_BASE = LiquidationLogic.MIN_LEFTOVER_BASE;
 
   /// @inheritdoc ISpoke
   address public immutable ORACLE;
 
   uint256 internal _reserveCount;
-  mapping(address user => mapping(uint256 reserveId => DataTypes.UserPosition))
-    internal _userPositions;
-  mapping(address user => DataTypes.PositionStatus) internal _positionStatus;
-  mapping(uint256 reserveId => DataTypes.Reserve) internal _reserves;
-  mapping(address positionManager => DataTypes.PositionManagerConfig) internal _positionManager;
-  mapping(address user => uint256 nonce) internal _nonces;
-  mapping(uint256 reserveId => mapping(uint16 configKey => DataTypes.DynamicReserveConfig))
+  mapping(address user => mapping(uint256 reserveId => UserPosition)) internal _userPositions;
+  mapping(address user => PositionStatus) internal _positionStatus;
+  mapping(uint256 reserveId => Reserve) internal _reserves;
+  mapping(address positionManager => PositionManagerConfig) internal _positionManager;
+  mapping(address user => uint256) internal _nonces;
+  mapping(uint256 reserveId => mapping(uint16 configKey => DynamicReserveConfig))
     internal _dynamicConfig; // dictionary of dynamic configs per reserve
-  DataTypes.LiquidationConfig internal _liquidationConfig;
-  mapping(address hub => mapping(uint256 assetId => bool exists)) internal _reserveExists;
+  LiquidationConfig internal _liquidationConfig;
+  mapping(address hub => mapping(uint256 assetId => bool)) internal _reserveExists;
 
   modifier onlyPositionManager(address onBehalfOf) {
     require(_isPositionManager({user: onBehalfOf, manager: msg.sender}), Unauthorized());
@@ -76,13 +91,11 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     _updateReservePriceSource(reserveId, priceSource);
   }
 
-  function updateLiquidationConfig(
-    DataTypes.LiquidationConfig calldata config
-  ) external restricted {
+  function updateLiquidationConfig(LiquidationConfig calldata config) external restricted {
     require(
-      config.targetHealthFactor >= Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD &&
+      config.targetHealthFactor >= HEALTH_FACTOR_LIQUIDATION_THRESHOLD &&
         config.liquidationBonusFactor <= PercentageMath.PERCENTAGE_FACTOR &&
-        config.healthFactorForMaxBonus < Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
+        config.healthFactorForMaxBonus < HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
       InvalidLiquidationConfig()
     );
     _liquidationConfig = config;
@@ -94,11 +107,11 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     address hub,
     uint256 assetId,
     address priceSource,
-    DataTypes.ReserveConfig calldata config,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    ReserveConfig calldata config,
+    DynamicReserveConfig calldata dynamicConfig
   ) external restricted returns (uint256) {
     require(hub != address(0), InvalidAddress());
-    require(assetId <= Constants.MAX_RESERVE_ID, InvalidAssetId());
+    require(assetId <= MAX_RESERVE_ID, InvalidAssetId());
     require(!_reserveExists[hub][assetId], ReserveExists());
 
     _validateReserveConfig(config);
@@ -111,7 +124,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
     _updateReservePriceSource(reserveId, priceSource);
 
-    _reserves[reserveId] = DataTypes.Reserve({
+    _reserves[reserveId] = Reserve({
       underlying: underlying,
       hub: IHubBase(hub),
       assetId: uint16(assetId),
@@ -134,10 +147,10 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   function updateReserveConfig(
     uint256 reserveId,
-    DataTypes.ReserveConfig calldata config
+    ReserveConfig calldata config
   ) external restricted {
     require(reserveId < _reserveCount, ReserveNotListed());
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     _validateReserveConfig(config);
     reserve.paused = config.paused;
     reserve.frozen = config.frozen;
@@ -149,7 +162,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   /// @inheritdoc ISpoke
   function addDynamicReserveConfig(
     uint256 reserveId,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    DynamicReserveConfig calldata dynamicConfig
   ) external restricted returns (uint16) {
     require(reserveId < _reserveCount, ReserveNotListed());
     uint16 configKey;
@@ -167,7 +180,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   function updateDynamicReserveConfig(
     uint256 reserveId,
     uint16 configKey,
-    DataTypes.DynamicReserveConfig calldata dynamicConfig
+    DynamicReserveConfig calldata dynamicConfig
   ) external restricted {
     require(reserveId < _reserveCount, ReserveNotListed());
     // @dev sufficient check since maxLiquidationBonus is always >= 100_00
@@ -196,8 +209,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     uint256 amount,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
-    DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
     _validateSupply(reserve);
 
     uint256 suppliedShares = reserve.hub.add(reserve.assetId, amount, msg.sender);
@@ -212,8 +225,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     uint256 amount,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
-    DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
     _validateWithdraw(reserve);
     IHubBase hub = reserve.hub;
     uint256 assetId = reserve.assetId;
@@ -238,9 +251,9 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     uint256 amount,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
-    DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
+    Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
     _validateBorrow(reserve);
     IHubBase hub = reserve.hub;
 
@@ -262,8 +275,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     uint256 amount,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[onBehalfOf][reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     _validateRepay(reserve);
     IHubBase hub = reserve.hub;
     uint256 assetId = reserve.assetId;
@@ -279,7 +292,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
       amount
     );
 
-    DataTypes.PremiumDelta memory premiumDelta = DataTypes.PremiumDelta({
+    IHubBase.PremiumDelta memory premiumDelta = IHubBase.PremiumDelta({
       sharesDelta: -userPosition.premiumShares.toInt256(),
       offsetDelta: -userPosition.premiumOffset.toInt256(),
       realizedDelta: accruedPremium.toInt256() - premiumDebtRestored.toInt256()
@@ -298,7 +311,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
       _positionStatus[onBehalfOf].setBorrowing(reserveId, false);
     }
 
-    DataTypes.UserAccountData memory userAccountData = _calculateUserAccountData(onBehalfOf);
+    UserAccountData memory userAccountData = _calculateUserAccountData(onBehalfOf);
     _notifyRiskPremiumUpdate(onBehalfOf, userAccountData.userRiskPremium);
 
     emit Repay(reserveId, msg.sender, onBehalfOf, restoredShares, premiumDelta);
@@ -311,8 +324,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     address user,
     uint256 debtToCover
   ) external {
-    DataTypes.UserAccountData memory userAccountData = _calculateUserAccountData(user);
-    DataTypes.LiquidateUserParams memory params = DataTypes.LiquidateUserParams({
+    UserAccountData memory userAccountData = _calculateUserAccountData(user);
+    LiquidationLogic.LiquidateUserParams memory params = LiquidationLogic.LiquidateUserParams({
       collateralReserveId: collateralReserveId,
       debtReserveId: debtReserveId,
       oracle: address(ORACLE),
@@ -334,9 +347,9 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
       _userPositions[user][debtReserveId]
     );
 
-    DataTypes.DynamicReserveConfig storage collateralDynConfig = _dynamicConfig[
-      collateralReserveId
-    ][_userPositions[user][collateralReserveId].configKey];
+    DynamicReserveConfig storage collateralDynConfig = _dynamicConfig[collateralReserveId][
+      _userPositions[user][collateralReserveId].configKey
+    ];
 
     bool isUserInDeficit = LiquidationLogic.liquidateUser(
       _reserves[collateralReserveId],
@@ -363,7 +376,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     bool usingAsCollateral,
     address onBehalfOf
   ) external onlyPositionManager(onBehalfOf) {
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
+    PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
     // process only if collateral status changes
     if (positionStatus.isUsingAsCollateral(reserveId) == usingAsCollateral) return;
 
@@ -414,7 +427,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     bytes32 hash = _hashTypedData(
       keccak256(
         abi.encode(
-          Constants.SET_USER_POSITION_MANAGER_TYPEHASH,
+          SET_USER_POSITION_MANAGER_TYPEHASH,
           positionManager,
           user,
           approve,
@@ -448,7 +461,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     bytes32 r,
     bytes32 s
   ) external {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     address underlying = reserve.underlying;
     require(underlying != address(0), ReserveNotListed());
     try
@@ -462,6 +475,11 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
         s: s
       })
     {} catch {}
+  }
+
+  /// @inheritdoc ISpoke
+  function getLiquidationLogic() public pure returns (address) {
+    return address(LiquidationLogic);
   }
 
   /// @inheritdoc ISpoke
@@ -484,8 +502,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   /// @inheritdoc ISpokeBase
   function getUserDebt(uint256 reserveId, address user) external view returns (uint256, uint256) {
-    DataTypes.UserPosition storage userPosition = _userPositions[user][reserveId];
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[user][reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     (uint256 drawnDebt, uint256 premiumDebt, ) = _getUserDebt(
       reserve.hub,
       reserve.assetId,
@@ -496,8 +514,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   /// @inheritdoc ISpokeBase
   function getUserTotalDebt(uint256 reserveId, address user) external view returns (uint256) {
-    DataTypes.UserPosition storage userPosition = _userPositions[user][reserveId];
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    UserPosition storage userPosition = _userPositions[user][reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     (uint256 drawnDebt, uint256 premiumDebt, ) = _getUserDebt(
       reserve.hub,
       reserve.assetId,
@@ -507,19 +525,19 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   }
 
   function getReserveSuppliedAssets(uint256 reserveId) external view returns (uint256) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     return reserve.hub.getSpokeAddedAssets(reserve.assetId, address(this));
   }
 
   /// @inheritdoc ISpokeBase
   function getReserveSuppliedShares(uint256 reserveId) external view returns (uint256) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     return reserve.hub.getSpokeAddedShares(reserve.assetId, address(this));
   }
 
   /// @inheritdoc ISpokeBase
   function getUserSuppliedAssets(uint256 reserveId, address user) public view returns (uint256) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     return
       reserve.hub.previewRemoveByShares(
         reserve.assetId,
@@ -538,13 +556,13 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   /// @inheritdoc ISpokeBase
   function getReserveDebt(uint256 reserveId) external view returns (uint256, uint256) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     return reserve.hub.getSpokeOwed(reserve.assetId, address(this));
   }
 
   /// @inheritdoc ISpokeBase
   function getReserveTotalDebt(uint256 reserveId) external view returns (uint256) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+    Reserve storage reserve = _reserves[reserveId];
     (uint256 drawnDebt, uint256 premiumDebt) = reserve.hub.getSpokeOwed(
       reserve.assetId,
       address(this)
@@ -553,12 +571,12 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   }
 
   function getUserRiskPremium(address user) external view returns (uint256) {
-    DataTypes.UserAccountData memory userAccountData = _calculateUserAccountData(user);
+    UserAccountData memory userAccountData = _calculateUserAccountData(user);
     return userAccountData.userRiskPremium;
   }
 
   function getHealthFactor(address user) external view returns (uint256) {
-    DataTypes.UserAccountData memory userAccountData = _calculateUserAccountData(user);
+    UserAccountData memory userAccountData = _calculateUserAccountData(user);
     return userAccountData.healthFactor;
   }
 
@@ -577,26 +595,22 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
       });
   }
 
-  function getLiquidationConfig() external view returns (DataTypes.LiquidationConfig memory) {
+  function getLiquidationConfig() external view returns (LiquidationConfig memory) {
     return _liquidationConfig;
   }
 
-  function getUserAccountData(
-    address user
-  ) external view returns (DataTypes.UserAccountData memory) {
+  function getUserAccountData(address user) external view returns (UserAccountData memory) {
     return _calculateUserAccountData(user);
   }
 
-  function getReserve(uint256 reserveId) external view returns (DataTypes.Reserve memory) {
+  function getReserve(uint256 reserveId) external view returns (Reserve memory) {
     return _reserves[reserveId];
   }
 
-  function getReserveConfig(
-    uint256 reserveId
-  ) external view returns (DataTypes.ReserveConfig memory) {
-    DataTypes.Reserve storage reserve = _reserves[reserveId];
+  function getReserveConfig(uint256 reserveId) external view returns (ReserveConfig memory) {
+    Reserve storage reserve = _reserves[reserveId];
     return
-      DataTypes.ReserveConfig({
+      ReserveConfig({
         paused: reserve.paused,
         frozen: reserve.frozen,
         borrowable: reserve.borrowable,
@@ -606,14 +620,14 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   function getDynamicReserveConfig(
     uint256 reserveId
-  ) external view returns (DataTypes.DynamicReserveConfig memory) {
+  ) external view returns (DynamicReserveConfig memory) {
     return _dynamicConfig[reserveId][_reserves[reserveId].dynamicConfigKey];
   }
 
   function getDynamicReserveConfig(
     uint256 reserveId,
     uint16 configKey
-  ) external view returns (DataTypes.DynamicReserveConfig memory) {
+  ) external view returns (DynamicReserveConfig memory) {
     // @dev we do not revert if key is unset
     return _dynamicConfig[reserveId][configKey];
   }
@@ -621,7 +635,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   function getUserPosition(
     uint256 reserveId,
     address user
-  ) external view returns (DataTypes.UserPosition memory) {
+  ) external view returns (UserPosition memory) {
     return _userPositions[user][reserveId];
   }
 
@@ -634,18 +648,18 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   }
 
   // internal
-  function _validateSupply(DataTypes.Reserve storage reserve) internal view {
+  function _validateSupply(Reserve storage reserve) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
     require(!reserve.paused, ReservePaused());
     require(!reserve.frozen, ReserveFrozen());
   }
 
-  function _validateWithdraw(DataTypes.Reserve storage reserve) internal view {
+  function _validateWithdraw(Reserve storage reserve) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
     require(!reserve.paused, ReservePaused());
   }
 
-  function _validateBorrow(DataTypes.Reserve storage reserve) internal view {
+  function _validateBorrow(Reserve storage reserve) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
     require(!reserve.paused, ReservePaused());
     require(!reserve.frozen, ReserveFrozen());
@@ -653,7 +667,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     // HF checked at the end of borrow action
   }
 
-  function _validateRepay(DataTypes.Reserve storage reserve) internal view {
+  function _validateRepay(Reserve storage reserve) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
     require(!reserve.paused, ReservePaused());
   }
@@ -679,21 +693,19 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   function _refreshAndValidateUserPosition(address user) internal returns (uint256) {
     // @dev refresh user position dynamic config only on borrow, withdraw, disableUsingAsCollateral
-    DataTypes.UserAccountData memory userAccountData = _calculateAndRefreshUserAccountData(user);
+    UserAccountData memory userAccountData = _calculateAndRefreshUserAccountData(user);
     require(
-      userAccountData.healthFactor >= Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
+      userAccountData.healthFactor >= HEALTH_FACTOR_LIQUIDATION_THRESHOLD,
       HealthFactorBelowThreshold()
     );
     return userAccountData.userRiskPremium;
   }
 
-  function _validateReserveConfig(DataTypes.ReserveConfig calldata config) internal pure {
-    require(config.collateralRisk <= Constants.MAX_COLLATERAL_RISK, InvalidCollateralRisk());
+  function _validateReserveConfig(ReserveConfig calldata config) internal pure {
+    require(config.collateralRisk <= MAX_COLLATERAL_RISK, InvalidCollateralRisk());
   }
 
-  function _validateDynamicReserveConfig(
-    DataTypes.DynamicReserveConfig calldata config
-  ) internal pure {
+  function _validateDynamicReserveConfig(DynamicReserveConfig calldata config) internal pure {
     // Enforce that at moment loan is taken, there should be enough collateral to cover liquidation
     require(
       config.collateralFactor <= PercentageMath.PERCENTAGE_FACTOR &&
@@ -712,7 +724,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
    * @param usingAsCollateral True if enables the reserve as collateral, false otherwise.
    */
   function _validateSetUsingAsCollateral(
-    DataTypes.Reserve storage reserve,
+    Reserve storage reserve,
     bool usingAsCollateral
   ) internal view {
     require(address(reserve.hub) != address(0), ReserveNotListed());
@@ -736,10 +748,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     return (amount - premiumDebt, premiumDebt);
   }
 
-  function _settlePremiumDebt(
-    DataTypes.UserPosition storage userPosition,
-    int256 realizedDelta
-  ) internal {
+  function _settlePremiumDebt(UserPosition storage userPosition, int256 realizedDelta) internal {
     userPosition.premiumShares = 0;
     userPosition.premiumOffset = 0;
     userPosition.realizedPremium = userPosition.realizedPremium.add(realizedDelta).toUint128();
@@ -747,20 +756,18 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   function _isPositionManager(address user, address manager) private view returns (bool) {
     if (user == manager) return true;
-    DataTypes.PositionManagerConfig storage config = _positionManager[manager];
+    PositionManagerConfig storage config = _positionManager[manager];
     return config.active && config.approval[user];
   }
 
-  function _calculateUserAccountData(
-    address user
-  ) internal view returns (DataTypes.UserAccountData memory) {
+  function _calculateUserAccountData(address user) internal view returns (UserAccountData memory) {
     // SAFETY: function does not modify state when refreshConfig is false
     return _castToView(_calculateAndPotentiallyRefreshUserAccountData)(user, false);
   }
 
   function _calculateAndRefreshUserAccountData(
     address user
-  ) internal returns (DataTypes.UserAccountData memory userAccountData) {
+  ) internal returns (UserAccountData memory userAccountData) {
     userAccountData = _calculateAndPotentiallyRefreshUserAccountData(user, true);
     emit RefreshAllUserDynamicConfig(user);
   }
@@ -773,8 +780,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   function _calculateAndPotentiallyRefreshUserAccountData(
     address user,
     bool refreshConfig
-  ) internal returns (DataTypes.UserAccountData memory userAccountData) {
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[user];
+  ) internal returns (UserAccountData memory userAccountData) {
+    PositionStatus storage positionStatus = _positionStatus[user];
 
     uint256 reserveId = _reserveCount;
     KeyValueList.List memory list = KeyValueList.init(positionStatus.collateralCount(reserveId));
@@ -782,10 +789,10 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
     bool collateral;
     while (true) {
       (reserveId, borrowing, collateral) = positionStatus.next(reserveId);
-      if (reserveId == PositionStatus.NOT_FOUND) break;
+      if (reserveId == PositionStatusMap.NOT_FOUND) break;
 
-      DataTypes.UserPosition storage userPosition = _userPositions[user][reserveId];
-      DataTypes.Reserve storage reserve = _reserves[reserveId];
+      UserPosition storage userPosition = _userPositions[user][reserveId];
+      Reserve storage reserve = _reserves[reserveId];
 
       uint256 assetPrice = IAaveOracle(ORACLE).getReservePrice(reserveId);
       uint256 assetUnit = uint256(10).uncheckedExp(reserve.decimals);
@@ -880,7 +887,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   function _getUserDebt(
     IHubBase hub,
     uint256 assetId,
-    DataTypes.UserPosition storage userPosition
+    UserPosition storage userPosition
   ) internal view returns (uint256, uint256, uint256) {
     uint256 accruedPremium = hub.previewRestoreByShares(assetId, userPosition.premiumShares) -
       userPosition.premiumOffset;
@@ -897,11 +904,11 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
    * @param newUserRiskPremium The new risk premium of the user.
    */
   function _notifyRiskPremiumUpdate(address user, uint256 newUserRiskPremium) internal {
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[user];
+    PositionStatus storage positionStatus = _positionStatus[user];
 
     uint256 reserveId = _reserveCount;
-    while ((reserveId = positionStatus.nextBorrowing(reserveId)) != PositionStatus.NOT_FOUND) {
-      DataTypes.UserPosition storage userPosition = _userPositions[user][reserveId];
+    while ((reserveId = positionStatus.nextBorrowing(reserveId)) != PositionStatusMap.NOT_FOUND) {
+      UserPosition storage userPosition = _userPositions[user][reserveId];
       uint256 assetId = _reserves[reserveId].assetId;
       IHubBase hub = _reserves[reserveId].hub;
 
@@ -921,7 +928,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
       ).toUint128());
       userPosition.realizedPremium += accruedUserPremium.toUint128();
 
-      DataTypes.PremiumDelta memory premiumDelta = DataTypes.PremiumDelta({
+      IHubBase.PremiumDelta memory premiumDelta = IHubBase.PremiumDelta({
         sharesDelta: newPremiumShares.signedSub(oldUserPremiumShares),
         offsetDelta: newPremiumOffset.signedSub(oldUserPremiumOffset),
         realizedDelta: accruedUserPremium.toInt256()
@@ -939,12 +946,12 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
    * @param user The address of the user whose deficits are being reported.
    */
   function _reportDeficit(address user) internal {
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[user];
+    PositionStatus storage positionStatus = _positionStatus[user];
     uint256 reserveId = _reserveCount;
 
-    while ((reserveId = positionStatus.nextBorrowing(reserveId)) != PositionStatus.NOT_FOUND) {
-      DataTypes.UserPosition storage userPosition = _userPositions[user][reserveId];
-      DataTypes.Reserve storage reserve = _reserves[reserveId];
+    while ((reserveId = positionStatus.nextBorrowing(reserveId)) != PositionStatusMap.NOT_FOUND) {
+      UserPosition storage userPosition = _userPositions[user][reserveId];
+      Reserve storage reserve = _reserves[reserveId];
       // validation should already have occurred during liquidation
       IHubBase hub = reserve.hub;
       uint256 assetId = reserve.assetId;
@@ -954,7 +961,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
         uint256 accruedPremium
       ) = _getUserDebt(hub, assetId, userPosition);
 
-      DataTypes.PremiumDelta memory premiumDelta = DataTypes.PremiumDelta({
+      IHubBase.PremiumDelta memory premiumDelta = IHubBase.PremiumDelta({
         sharesDelta: -userPosition.premiumShares.toInt256(),
         offsetDelta: -userPosition.premiumOffset.toInt256(),
         realizedDelta: accruedPremium.toInt256() - premiumDebtRestored.toInt256()
@@ -976,8 +983,8 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
 
   function _refreshDynamicConfig(address user) internal {
     uint256 reserveId = _reserveCount;
-    DataTypes.PositionStatus storage positionStatus = _positionStatus[user];
-    while ((reserveId = positionStatus.nextCollateral(reserveId)) != PositionStatus.NOT_FOUND) {
+    PositionStatus storage positionStatus = _positionStatus[user];
+    while ((reserveId = positionStatus.nextCollateral(reserveId)) != PositionStatusMap.NOT_FOUND) {
       _userPositions[user][reserveId].configKey = _reserves[reserveId].dynamicConfigKey;
     }
     emit RefreshAllUserDynamicConfig(user);
@@ -999,11 +1006,11 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   }
 
   function _castToView(
-    function(address, bool) internal returns (DataTypes.UserAccountData memory) fnIn
+    function(address, bool) internal returns (UserAccountData memory) fnIn
   )
     internal
     pure
-    returns (function(address, bool) internal view returns (DataTypes.UserAccountData memory) fnOut)
+    returns (function(address, bool) internal view returns (UserAccountData memory) fnOut)
   {
     assembly ('memory-safe') {
       fnOut := fnIn
@@ -1011,7 +1018,7 @@ abstract contract Spoke is ISpoke, Multicall, AccessManagedUpgradeable, EIP712 {
   }
 
   function _setUserPositionManager(address positionManager, address user, bool approve) internal {
-    DataTypes.PositionManagerConfig storage config = _positionManager[positionManager];
+    PositionManagerConfig storage config = _positionManager[positionManager];
     // @dev only allow approval when position manager is active for improved UX
     require(!approve || config.active, InactivePositionManager());
     config.approval[user] = approve;
