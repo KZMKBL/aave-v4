@@ -29,21 +29,23 @@ interface IHub is IHubBase, IAccessManaged {
   /// @dev liquidityFee The protocol fee charged on drawn and premium liquidity growth, expressed in BPS.
   /// @dev decimals The number of decimals of the underlying asset.
   struct Asset {
-    uint128 liquidity;
-    uint128 addedShares;
+    uint120 liquidity;
+    uint120 realizedFees;
+    uint8 decimals;
     //
-    uint128 deficit;
-    uint128 swept;
+    uint120 deficit;
+    uint120 swept;
     //
-    uint128 premiumShares;
-    uint128 premiumOffset;
+    uint120 realizedPremium;
+    uint120 premiumOffset;
     //
-    uint128 drawnShares;
-    uint128 realizedPremium;
+    uint16 liquidityFee;
+    uint120 drawnShares;
+    uint120 premiumShares;
     //
-    uint128 drawnIndex;
+    uint120 drawnIndex;
     uint96 drawnRate;
-    uint32 lastUpdateTimestamp;
+    uint40 lastUpdateTimestamp;
     //
     address underlying;
     //
@@ -53,9 +55,7 @@ interface IHub is IHubBase, IAccessManaged {
     //
     address feeReceiver;
     //
-    uint128 realizedFees;
-    uint16 liquidityFee;
-    uint8 decimals;
+    uint120 addedShares;
   }
 
   /// @notice Asset configuration. Subset of the `Asset` struct.
@@ -79,20 +79,20 @@ interface IHub is IHubBase, IAccessManaged {
   /// @dev paused True if the spoke is prevented from performing actions that instantly update the liquidity.
   /// @dev deficit The deficit reported by a spoke for a given asset, expressed in asset units.
   struct SpokeData {
-    uint128 premiumShares;
-    uint128 premiumOffset;
+    uint120 premiumShares;
+    uint120 premiumOffset;
     //
-    uint128 realizedPremium;
-    uint128 drawnShares;
+    uint120 realizedPremium;
+    uint120 drawnShares;
     //
-    uint128 addedShares;
+    uint120 addedShares;
     uint40 addCap;
     uint40 drawCap;
     uint24 riskPremiumThreshold;
     bool active;
     bool paused;
     //
-    uint128 deficit;
+    uint120 deficit;
   }
 
   /// @notice Spoke configuration data. Subset of the `SpokeData` struct.

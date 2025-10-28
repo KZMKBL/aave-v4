@@ -137,15 +137,15 @@ library AssetLogic {
     }
 
     uint256 drawnIndex = asset.getDrawnIndex();
-    asset.realizedFees += asset.getUnrealizedFees(drawnIndex).toUint128();
-    asset.drawnIndex = drawnIndex.toUint128();
-    asset.lastUpdateTimestamp = block.timestamp.toUint32();
+    asset.realizedFees += asset.getUnrealizedFees(drawnIndex).toUint120();
+    asset.drawnIndex = drawnIndex.toUint120();
+    asset.lastUpdateTimestamp = block.timestamp.toUint40();
   }
 
   /// @notice Calculates the drawn index of a specified asset based on the existing drawn rate and index.
   function getDrawnIndex(IHub.Asset storage asset) internal view returns (uint256) {
     uint256 previousIndex = asset.drawnIndex;
-    uint32 lastUpdateTimestamp = asset.lastUpdateTimestamp;
+    uint40 lastUpdateTimestamp = asset.lastUpdateTimestamp;
     if (
       lastUpdateTimestamp == block.timestamp || (asset.drawnShares == 0 && asset.premiumShares == 0)
     ) {
@@ -173,8 +173,8 @@ library AssetLogic {
       return 0;
     }
 
-    uint128 drawnShares = asset.drawnShares;
-    uint128 premiumShares = asset.premiumShares;
+    uint120 drawnShares = asset.drawnShares;
+    uint120 premiumShares = asset.premiumShares;
 
     uint256 liquidityGrowth = drawnShares.rayMulUp(drawnIndex) -
       drawnShares.rayMulUp(previousIndex) +

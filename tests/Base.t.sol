@@ -228,7 +228,7 @@ abstract contract Base is Test {
     uint256 premiumOffset;
     uint256 realizedPremium;
     uint256 premium;
-    uint32 lastUpdateTimestamp;
+    uint40 lastUpdateTimestamp;
     uint256 liquidity;
     uint256 drawnIndex;
     uint256 drawnRate;
@@ -1888,7 +1888,7 @@ abstract contract Base is Test {
   function _calculateExpectedDrawnIndex(
     uint256 initialDrawnIndex,
     uint96 borrowRate,
-    uint32 startTime
+    uint40 startTime
   ) internal view returns (uint256) {
     return initialDrawnIndex.rayMulUp(MathUtils.calculateLinearInterest(borrowRate, startTime));
   }
@@ -1898,7 +1898,7 @@ abstract contract Base is Test {
     uint256 initialDrawnShares,
     uint256 initialDrawnIndex,
     uint96 borrowRate,
-    uint32 startTime
+    uint40 startTime
   ) internal view returns (uint256 newDrawnIndex, uint256 newDrawnDebt) {
     newDrawnIndex = _calculateExpectedDrawnIndex(initialDrawnIndex, borrowRate, startTime);
     newDrawnDebt = initialDrawnShares.rayMulUp(newDrawnIndex);
@@ -1908,7 +1908,7 @@ abstract contract Base is Test {
   function _calculateExpectedDrawnDebt(
     uint256 initialDebt,
     uint96 borrowRate,
-    uint32 startTime
+    uint40 startTime
   ) internal view returns (uint256) {
     return MathUtils.calculateLinearInterest(borrowRate, startTime).rayMulUp(initialDebt);
   }
@@ -2395,7 +2395,7 @@ abstract contract Base is Test {
         premiumOffset: assetData.premiumOffset,
         realizedPremium: assetData.realizedPremium,
         premium: premium,
-        lastUpdateTimestamp: assetData.lastUpdateTimestamp.toUint32(),
+        lastUpdateTimestamp: assetData.lastUpdateTimestamp.toUint40(),
         drawnIndex: assetData.drawnIndex,
         drawnRate: assetData.drawnRate
       });
@@ -2619,7 +2619,7 @@ abstract contract Base is Test {
     IHub.Asset memory asset = hub.getAsset(assetId);
     uint256 lastDrawnIndex = asset.drawnIndex;
     uint256 drawnIndex = asset.drawnIndex.rayMulUp(
-      MathUtils.calculateLinearInterest(asset.drawnRate, uint32(asset.lastUpdateTimestamp))
+      MathUtils.calculateLinearInterest(asset.drawnRate, uint40(asset.lastUpdateTimestamp))
     );
     uint256 liquidityGrowth = asset.drawnShares.rayMulUp(drawnIndex) -
       asset.drawnShares.rayMulUp(lastDrawnIndex) +
