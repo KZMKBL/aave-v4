@@ -838,13 +838,13 @@ contract SpokeBase is Base {
     return healthFactor >= Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD;
   }
 
-  function _calculateExpectedUserRP(address user, ISpoke spoke) internal view returns (uint256) {
-    return _calculateExpectedUserRP(user, spoke, false);
+  function _calculateExpectedUserRP(ISpoke spoke, address user) internal view returns (uint256) {
+    return _calculateExpectedUserRP(spoke, user, false);
   }
 
   function _calculateExpectedUserRP(
-    address user,
     ISpoke spoke,
+    address user,
     bool refreshDynamicConfig
   ) internal view returns (uint256) {
     CalculateRiskPremiumLocal memory vars;
@@ -878,11 +878,6 @@ contract SpokeBase is Base {
 
     if (vars.totalDebtValue == 0) {
       return 0;
-    } else {
-      vars.healthFactor = vars.healthFactor.wadDivDown(vars.totalDebtValue).fromBpsDown();
-      if (vars.healthFactor < Constants.HEALTH_FACTOR_LIQUIDATION_THRESHOLD) {
-        return 0;
-      }
     }
 
     // Gather up list of reserves as collateral to sort by collateral risk

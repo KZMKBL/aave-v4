@@ -231,11 +231,6 @@ abstract contract Spoke is ISpoke, Multicall, NoncesKeyed, AccessManagedUpgradea
     uint256 suppliedShares = reserve.hub.add(reserve.assetId, amount);
     userPosition.suppliedShares += suppliedShares.toUint120();
 
-    if (_positionStatus[onBehalfOf].isUsingAsCollateral(reserveId)) {
-      uint256 newRiskPremium = _calculateUserAccountData(onBehalfOf).riskPremium;
-      _notifyRiskPremiumUpdate(onBehalfOf, newRiskPremium);
-    }
-
     emit Supply(reserveId, msg.sender, onBehalfOf, suppliedShares, amount);
 
     return (suppliedShares, amount);
@@ -422,20 +417,17 @@ abstract contract Spoke is ISpoke, Multicall, NoncesKeyed, AccessManagedUpgradea
     _validateSetUsingAsCollateral(_getReserve(reserveId), usingAsCollateral);
     PositionStatus storage positionStatus = _positionStatus[onBehalfOf];
 
-    // no op also ensures only new collateral is enabled and refreshed without health factor check
     if (positionStatus.isUsingAsCollateral(reserveId) == usingAsCollateral) {
       return;
     }
     positionStatus.setUsingAsCollateral(reserveId, usingAsCollateral);
 
-    uint256 newRiskPremium;
     if (usingAsCollateral) {
       _refreshDynamicConfig(onBehalfOf, reserveId);
-      newRiskPremium = _calculateUserAccountData(onBehalfOf).riskPremium;
     } else {
-      newRiskPremium = _refreshAndValidateUserAccountData(onBehalfOf).riskPremium;
+      uint256 newRiskPremium = _refreshAndValidateUserAccountData(onBehalfOf).riskPremium;
+      _notifyRiskPremiumUpdate(onBehalfOf, newRiskPremium);
     }
-    _notifyRiskPremiumUpdate(onBehalfOf, newRiskPremium);
 
     emit SetUsingAsCollateral(reserveId, msg.sender, onBehalfOf, usingAsCollateral);
   }
@@ -824,27 +816,21 @@ abstract contract Spoke is ISpoke, Multicall, NoncesKeyed, AccessManagedUpgradea
         .fromBpsDown();
     }
 
-    uint256 debtValueLeftToCover = accountData.totalDebtValue;
-    if (
-      debtValueLeftToCover == 0 || accountData.healthFactor < HEALTH_FACTOR_LIQUIDATION_THRESHOLD
-    ) {
-      // riskPremium is 0 when user has no debt or is unhealthy
-      return accountData;
-    }
-
     // sort by collateral risk in ASC, collateral value in DESC
     collateralInfo.sortByKey();
 
     // runs until either the collateral or debt is exhausted
+    uint256 debtValueLeftToCover = accountData.totalDebtValue;
+
     for (uint256 index = 0; index < collateralInfo.length(); ++index) {
+      if (debtValueLeftToCover == 0) {
+        break;
+      }
+
       (uint256 collateralRisk, uint256 userCollateralValue) = collateralInfo.get(index);
       userCollateralValue = userCollateralValue.min(debtValueLeftToCover);
       accountData.riskPremium += userCollateralValue * collateralRisk;
       debtValueLeftToCover = debtValueLeftToCover.uncheckedSub(userCollateralValue);
-
-      if (debtValueLeftToCover == 0) {
-        break;
-      }
     }
 
     if (debtValueLeftToCover < accountData.totalDebtValue) {
@@ -908,7 +894,7 @@ abstract contract Spoke is ISpoke, Multicall, NoncesKeyed, AccessManagedUpgradea
 
   /// @notice Reports deficits for all debt reserves of the user, including the reserve being repaid during liquidation.
   /// @dev Deficit validation should already have occurred during liquidation.
-  /// @dev It clears the user position, setting drawn, premium, and risk premium to zero.
+  /// @dev It clears the user position, setting drawn debt, premium debt, and risk premium to zero.
   function _reportDeficit(address user) internal {
     PositionStatus storage positionStatus = _positionStatus[user];
     positionStatus.hasPositiveRiskPremium = false;
